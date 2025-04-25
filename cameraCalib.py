@@ -463,7 +463,7 @@ class MinimalistCalibratorGUI:
                 compound="center"
             )
             self.camera_preview_label.configure(style="CountdownLabel.TLabel")  # Apply style
-            self.master.after(1000, self.start_initial_countdown, countdown_seconds - 1)
+            self.master.after(1000, self.run_capture_countdown, countdown_seconds - 1)
         else:
             #倒计时结束
             self.camera_preview_label.config(text="Saving...", font=None, compound="image")
