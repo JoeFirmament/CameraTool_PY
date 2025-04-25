@@ -1448,6 +1448,8 @@ class MinimalistCalibratorGUI:
             self.capture_output_folder_label.config(text="No folder selected")
             self.status_bar.config(text="Photo save folder selection cancelled.")
 
+
+
     def start_capture(self):
         """Start timed camera capture."""
         if self.is_capturing_preview: # Check preview status as well
@@ -1511,7 +1513,8 @@ class MinimalistCalibratorGUI:
         self.capture_interval_ms = int(interval_sec * 1000) # Convert seconds to milliseconds
 
         # Explicitly set the size of the preview label
-        self.camera_preview_label.config(width=self.preview_width, height=self.preview_height)
+        # REMOVE OR COMMENT OUT THIS LINE:
+        # self.camera_preview_label.config(width=self.preview_width, height=self.preview_height)
         self.camera_preview_label.update_idletasks()  # Ensure size is applied before first frame
 
 
