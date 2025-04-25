@@ -366,22 +366,21 @@ class MinimalistCalibratorGUI:
         # --- Tab 3: Camera Capture Tool ---
         capture_tab = ttk.Frame(self.notebook, padding="10", style='TFrame')
         self.notebook.add(capture_tab, text='Camera Capture')
-        capture_tab.grid_columnconfigure(0, weight=1) # Controls column
-        capture_tab.grid_columnconfigure(1, weight=2) # Preview column
-        capture_tab.grid_rowconfigure(0, weight=1) # Capture frame row
+        capture_tab.grid_columnconfigure(0, weight=0) # Controls column - fixed width
+        capture_tab.grid_columnconfigure(1, weight=1) # Preview column - expands
+        capture_tab.grid_rowconfigure(0, weight=1) # Capture frame row - expands
 
         capture_frame = ttk.LabelFrame(capture_tab, text="Camera Capture Tool", padding="10", style='TLabelframe')
         capture_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 0)) # Fill the tab
-        capture_frame.grid_columnconfigure(0, weight=1)
-        capture_frame.grid_columnconfigure(1, weight=2) # Preview column wider
-        capture_frame.grid_rowconfigure(0, weight=1) # Settings row doesn't need stretch
-        capture_frame.grid_rowconfigure(1, weight=1) # Row with preview should expand
-
+        # Removed weights from capture_frame columns and rows
+        capture_frame.grid_columnconfigure(0, weight=0) # Controls column - fixed width
+        capture_frame.grid_columnconfigure(1, weight=1) # Preview column - expands
 
         # Capture Settings and Controls (left side)
         capture_controls_frame = ttk.Frame(capture_frame, style='TFrame')
-        capture_controls_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), rowspan=2) # Spans two rows
-        capture_controls_frame.grid_columnconfigure(1, weight=1)
+        # Removed sticky nsew from capture_controls_frame
+        capture_controls_frame.grid(row=0, column=0, padx=(0, 10), rowspan=2) # Placed in column 0, row 0
+        capture_controls_frame.grid_columnconfigure(1, weight=1) # Allow widgets within controls to expand
 
         ttk.Label(capture_controls_frame, text="Camera Index:", style='TLabel').grid(row=0, column=0, sticky="w", padx=(0, 5))
         self.entry_camera_index = ttk.Entry(capture_controls_frame, width=5)
@@ -418,16 +417,26 @@ class MinimalistCalibratorGUI:
 
         # Camera Preview Area (right side)
         capture_preview_frame = ttk.Frame(capture_frame, style='TFrame')
-        capture_preview_frame.grid(row=0, column=1, sticky="nsew", rowspan=2) # Spans rows 0 and 1 in capture_frame
-        capture_preview_frame.grid_columnconfigure(0, weight=1)
-        capture_preview_frame.grid_rowconfigure(0, weight=1)
+        # Set a fixed size for the preview frame (adjust width/height as needed)
+        # You might want to determine this size based on common camera resolutions
+        # or make it configurable. For now, using a reasonable fixed size.
+        # Example: 640x480 is a common webcam resolution
+        preview_width = 640
+        preview_height = 480
+        capture_preview_frame.config(width=preview_width, height=preview_height)
 
+        # Use pack instead of grid for the preview label within its frame
+        # Pack can be simpler when dealing with a single widget filling its container
+        capture_preview_frame.grid(row=0, column=1, sticky="nsew", rowspan=2) # Still use grid to place frame in capture_frame
+
+        # Removed grid and sticky from camera_preview_label
         self.camera_preview_label = ttk.Label(capture_preview_frame, style='TLabel', anchor='center', text="Camera Preview", compound='image')
-        self.camera_preview_label.grid(row=0, column=0, sticky="nsew")
+        # Use pack to place the label inside the fixed-size frame
+        self.camera_preview_label.pack(expand=True, fill="both")
 
-        # Let the capture frame's preview column expand more than controls
-        capture_frame.grid_columnconfigure(0, weight=1)
-        capture_frame.grid_columnconfigure(1, weight=2)
+        # Removed weights for capture_preview_frame and its label to prevent them from growing
+        # capture_preview_frame.grid_columnconfigure(0, weight=1) # Removed
+        # capture_preview_frame.grid_rowconfigure(0, weight=1) # Removed
 
 
         # Bottommost status bar - This stays outside the Notebook
@@ -1482,6 +1491,8 @@ class MinimalistCalibratorGUI:
                 raise IOError(f"Cannot open camera {camera_index}")
 
             # Optionally set camera resolution (may not work on all cameras/platforms)
+            # This might help in getting a consistent initial size, but window resizing
+            # needs to be handled by layout.
             # self.camera_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             # self.camera_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
@@ -1521,8 +1532,9 @@ class MinimalistCalibratorGUI:
                 self.last_frame = frame # Store the last read frame
 
                 # Convert frame for Tkinter display
-                preview_width = self.camera_preview_label.winfo_width()
-                preview_height = self.camera_preview_label.winfo_height()
+                # Get the current size of the preview label's container frame (which has a fixed size)
+                preview_width = self.camera_preview_label.master.winfo_width()
+                preview_height = self.camera_preview_label.master.winfo_height()
 
                 tk_img, error_msg = cv2_to_tk(frame, preview_width, preview_height)
 
