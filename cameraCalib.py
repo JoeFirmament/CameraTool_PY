@@ -6,7 +6,8 @@ import glob
 from PIL import Image, ImageTk # Requires Pillow: pip install Pillow
 import os # For handling file paths
 import sys # For handling path separators
-
+import time # For timestamp in filenames
+# import threading # Tkinter's after is simpler for GUI updates
 
 # Helper function to convert OpenCV image (NumPy array) to Tkinter PhotoImage
 # Also resizes the image to fit within the display area while maintaining aspect ratio
@@ -43,8 +44,8 @@ def cv2_to_tk(cv2_img, display_width, display_height):
     if display_width <= 1 or display_height <= 1:
          # Use default reasonable size if actual widget size is not available yet
          # print(f"Warning: Display area size <= 1. Using default size.") # Debug print
-         display_width = 600
-         display_height = 400
+         display_width = 640 # Default preview size
+         display_height = 480 # Default preview size
          # Check if display_width/height are still <= 1 after fallback
          if display_width <= 1 or display_height <= 1:
              return (None, f"Invalid display dimensions after fallback: {display_width}x{display_height}")
@@ -89,7 +90,7 @@ class MinimalistCalibratorGUI:
     def __init__(self, master):
         self.master = master
         master.title("Camera Calibration Tool") # Simple title
-        master.minsize(900, 600) # Set minimum window size
+        # master.minsize(900, 750) # Set minimum window size to accommodate capture preview - Adjusted later
 
         # --- Try setting application icon ---
         icon_path = "calib.png"
@@ -115,10 +116,10 @@ class MinimalistCalibratorGUI:
         # Configure default styles for widget classes, setting background to white
         style.configure('TFrame', background='white')
         style.configure('TLabel', background='white')
-        # Configure default style for TLabelFrame (background and label text color)
+        # Configure default style for TLabelframe (background and label text color)
         # Note: This might not make the LabelFrame border white, as the border is part of the theme drawing
-        style.configure('TLabelFrame', background='white')
-        style.configure('TLabelFrame.Label', background='white', foreground='black') # Ensure label text is visible
+        style.configure('TLabelframe', background='white')
+        style.configure('TLabelframe.Label', background='white', foreground='black') # Ensure label text is visible
 
         # Configure Treeview style, setting the content area background to white
         style.configure('Treeview', background='white', fieldbackground='white', foreground='black', rowheight=25) # rowheight can adjust row height
@@ -128,15 +129,21 @@ class MinimalistCalibratorGUI:
         style.configure('excluded', foreground='gray')
         style.configure('failed', foreground='red')
 
-        # tk.Text widgets are not ttk, set bg parameter directly
+        # Configure Notebook styles
+        style.configure('TNotebook', background='white', borderwidth=0)
+        style.configure('TNotebook.Tab', background='lightgray', foreground='black', padding=[5, 2]) # Padding [width, height]
+        style.map('TNotebook.Tab', background=[('selected', 'white')]) # Selected tab background is white
+
+
+        # tk.Text widgets are not ttk, directly set bg parameter
 
 
         # Data storage
         self.image_paths = []
-        self.objpoints_all = [] # 3D points for all images where corners were successfully found (world coordinate system)
-        self.imgpoints_all = [] # 2D points for all images where corners were successfully found (image coordinate system)
-        self.successful_image_indices = [] # Indices of images with successfully found corners in the original self.image_paths list (corresponding to objpoints_all/imgpoints_all index)
-        self.excluded_indices = set() # Set of indices of excluded images in the original self.image_paths list
+        self.objpoints_all = [] # All 3D points for images where corners were found (world coordinate system)
+        self.imgpoints_all = [] # All 2D points for images where corners were found (image coordinate system)
+        self.successful_image_indices = [] # Original indices of images with successfully found corners (corresponds to objpoints_all/imgpoints_all index)
+        self.excluded_indices = set() # Set of original indices of excluded images
         self.camera_matrix = None
         self.dist_coeffs = None
         self.rvecs = None # Rotation vectors for successfully calibrated images (corresponding to objpoints_all/imgpoints_all order)
@@ -150,243 +157,289 @@ class MinimalistCalibratorGUI:
         self.validation_original_tk = None
         self.validation_undistorted_tk = None
 
+        # Camera Capture variables
+        self.camera_cap = None # OpenCV VideoCapture object
+        self.is_capturing = False # Flag for timed capture saving
+        self.is_capturing_preview = False # Flag for continuous preview loop
+        self.capture_count = 0
+        self.total_capture_count = 0
+        self.capture_interval_ms = 0 # Interval in milliseconds
+        self.capture_output_folder = None
+        self.capture_after_id = None # To store the ID returned by master.after
+        self.preview_after_id = None # To store the ID returned by master.after for preview
+        self.last_frame = None # Store the last frame read from camera
+
 
         # --- GUI Layout ---
-        # Main frame, apply default TFrame style (already configured with white background), add padding
-        main_frame = ttk.Frame(master, padding="15", style='TFrame') # Add outer padding
+        main_frame = ttk.Frame(master, padding="15", style='TFrame')
         main_frame.grid(row=0, column=0, sticky="nsew")
         master.grid_columnconfigure(0, weight=1)
         master.grid_rowconfigure(0, weight=1)
-        master.configure(bg='white') # Set root window background to white
+        master.configure(bg='white')
+
+        # --- Use Notebook for main sections ---
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.grid(row=0, column=0, sticky="nsew")
+        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_rowconfigure(0, weight=1) # Notebook takes up most vertical space
 
 
-        # Top control/parameter area - Use LabelFrame for grouping, **do not specify style**, rely on default style (configured with white background), add padding
-        control_frame = ttk.LabelFrame(main_frame, text="Settings", padding="10") # Simpler title, add inner padding
-        control_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 15)) # Add bottom pady
-        control_frame.grid_columnconfigure(0, weight=1) # Allow internal frame to expand
+        # --- Tab 1: Camera Calibration ---
+        calibration_tab = ttk.Frame(self.notebook, padding="10", style='TFrame')
+        self.notebook.add(calibration_tab, text='Camera Calibration')
+        calibration_tab.grid_columnconfigure(0, weight=1) # Settings/List column
+        calibration_tab.grid_columnconfigure(1, weight=2) # Image View column
+        calibration_tab.grid_rowconfigure(0, weight=1) # Calibration setup/images row
+        calibration_tab.grid_rowconfigure(1, weight=0) # Results row fixed height
+
+        # --- Section 1: Camera Calibration Setup & Image Management ---
+        calibration_setup_frame = ttk.LabelFrame(calibration_tab, text="Setup & Images", padding="10", style='TLabelframe')
+        calibration_setup_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 15)) # Use nsew to fill in tab
+        calibration_setup_frame.grid_columnconfigure(0, weight=1) # Left column for settings
+        calibration_setup_frame.grid_columnconfigure(1, weight=2) # Right column for image view
+        calibration_setup_frame.grid_rowconfigure(1, weight=1) # Row with list/view should expand
 
 
-        # Create a white Frame inside control_frame to hold content
+        # Settings and List (left side of calibration_setup_frame)
+        settings_list_frame = ttk.Frame(calibration_setup_frame, style='TFrame')
+        settings_list_frame.grid(row=0, column=0, sticky="nsew") # Spans row 0 in calibration_setup_frame
+        # No weight needed on settings_list_frame columns, inner frames handle it
+
+        # Calibration Settings (top left)
+        control_frame = ttk.LabelFrame(settings_list_frame, text="Settings", padding="10", style='TLabelframe')
+        control_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        control_frame.grid_columnconfigure(0, weight=1)
+
         control_content_frame = ttk.Frame(control_frame, style='TFrame')
-        control_content_frame.grid(row=0, column=0, sticky="nsew", columnspan=2) # Fill the content area of the LabelFrame
-        control_frame.grid_rowconfigure(0, weight=1) # Let internal frame expand
+        control_content_frame.grid(row=0, column=0, sticky="nsew", columnspan=2)
+        control_frame.grid_rowconfigure(0, weight=1)
 
-
-        # File selection row - Use Frame for organization, apply default TFrame style, add padding
-        select_file_frame = ttk.Frame(control_content_frame, style='TFrame') # Placed inside control_content_frame
-        select_file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10)) # Add bottom pady
-        select_file_frame.grid_columnconfigure(1, weight=1) # Path label takes up remaining space
-        self.select_folder_button = ttk.Button(select_file_frame, text="Select Image Folder...")
-        self.select_folder_button.grid(row=0, column=0, sticky="w", padx=(0, 15)) # Add right padx
-        self.select_folder_button.config(command=self.select_folder) # Bind command
-        # Label applies default TLabel style
-        self.folder_path_label = ttk.Label(select_file_frame, text="No folder selected", relief="sunken", anchor="w", style='TLabel') # sunken adds a subtle border
+        select_file_frame = ttk.Frame(control_content_frame, style='TFrame')
+        select_file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        select_file_frame.grid_columnconfigure(1, weight=1)
+        self.select_folder_button = ttk.Button(select_file_frame, text="Select Calibration Image Folder...")
+        self.select_folder_button.grid(row=0, column=0, sticky="w", padx=(0, 15))
+        self.select_folder_button.config(command=self.select_folder)
+        self.folder_path_label = ttk.Label(select_file_frame, text="No folder selected", relief="sunken", anchor="w", style='TLabel')
         self.folder_path_label.grid(row=0, column=1, sticky="ew")
 
+        param_frame = ttk.Frame(control_content_frame, style='TFrame')
+        param_frame.grid(row=1, column=0, sticky="w", pady=(5, 0))
 
-        # Parameter input row - Use internal frame for organization, apply default TFrame style, add padding
-        param_frame = ttk.Frame(control_content_frame, style='TFrame') # Placed inside control_content_frame
-        param_frame.grid(row=1, column=0, sticky="w", pady=(5, 0)) # Add top pady
-
-        ttk.Label(param_frame, text="Inner Corners(W,H):", style='TLabel').grid(row=0, column=0, padx=(0, 5)) # Add right padx
+        ttk.Label(param_frame, text="Inner Corners(W,H):", style='TLabel').grid(row=0, column=0, padx=(0, 5))
         self.entry_board_w = ttk.Entry(param_frame, width=5)
         self.entry_board_w.grid(row=0, column=1, padx=(0, 2))
-        self.entry_board_w.insert(0, "7") # Default value
+        self.entry_board_w.insert(0, "7")
         ttk.Label(param_frame, text=",", style='TLabel').grid(row=0, column=2)
         self.entry_board_h = ttk.Entry(param_frame, width=5)
-        self.entry_board_h.grid(row=0, column=3, padx=(0, 15)) # Add right padx
-        self.entry_board_h.insert(0, "6") # Default value
+        self.entry_board_h.grid(row=0, column=3, padx=(0, 15))
+        self.entry_board_h.insert(0, "6")
 
-        ttk.Label(param_frame, text="Square Size(m):", style='TLabel').grid(row=0, column=4, padx=(0, 5)) # Add right padx
+        ttk.Label(param_frame, text="Square Size(m):", style='TLabel').grid(row=0, column=4, padx=(0, 5))
         self.entry_square_size = ttk.Entry(param_frame, width=8)
         self.entry_square_size.grid(row=0, column=5)
 
 
-        # Middle content area - Split horizontally, left list right image, apply default TFrame style
-        content_frame = ttk.Frame(main_frame, style='TFrame')
-        content_frame.grid(row=1, column=0, columnspan=2, sticky="nsew")
-        main_frame.grid_columnconfigure(0, weight=1) # Left list column
-        main_frame.grid_columnconfigure(1, weight=2) # Right image column, takes twice the space
-        main_frame.grid_rowconfigure(1, weight=1) # Content area fills remaining height
+        # Image List (bottom left)
+        list_frame = ttk.LabelFrame(settings_list_frame, text="Image List (Double-click to preview)", padding="10", style='TLabelframe')
+        list_frame.grid(row=1, column=0, sticky="nsew", pady=(10, 0)) # Below settings
+        settings_list_frame.grid_rowconfigure(1, weight=1) # Let list frame expand
 
-
-        # Left image list area - Use LabelFrame for grouping, **do not specify style**, rely on default style (configured with white background), add padding
-        list_frame = ttk.LabelFrame(content_frame, text="Image List (Double-click to preview)", padding="10") # Simpler title, add inner padding
-        list_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 15)) # Add right padx
-        content_frame.grid_columnconfigure(0, weight=1) # Allow internal frame to expand
-        content_frame.grid_rowconfigure(0, weight=1) # Allow internal frame to expand
-
-        # In list_frame, create a white Frame to hold content
         list_content_frame = ttk.Frame(list_frame, style='TFrame')
-        list_content_frame.grid(row=0, column=0, sticky="nsew", columnspan=2) # Fill the content area of the LabelFrame
-        list_frame.grid_rowconfigure(0, weight=1) # Let internal frame expand
-        list_frame.grid_columnconfigure(0, weight=1) # Let internal frame expand
+        list_content_frame.grid(row=0, column=0, sticky="nsew", columnspan=2)
+        list_frame.grid_rowconfigure(0, weight=1)
+        list_frame.grid_columnconfigure(0, weight=1)
 
-
-        # Use Treeview to display list (filename, error, status), using configured Treeview style
-        self.image_list_tree = ttk.Treeview(list_content_frame, columns=("Error", "Status"), show="headings", style='Treeview') # Placed inside list_content_frame
-        self.image_list_tree.heading("#0", text="Image Name") # #0 is the default text column
+        self.image_list_tree = ttk.Treeview(list_content_frame, columns=("Error", "Status"), show="headings", style='Treeview')
+        self.image_list_tree.heading("#0", text="Image Name")
         self.image_list_tree.heading("Error", text="Error")
         self.image_list_tree.heading("Status", text="Status")
-        # column stretch=tk.TRUE makes the filename column self-adjust width, other columns fixed
         self.image_list_tree.column("#0", width=150, anchor="w", stretch=tk.TRUE)
         self.image_list_tree.column("Error", width=60, anchor="center", stretch=tk.FALSE)
         self.image_list_tree.column("Status", width=80, anchor="center", stretch=tk.FALSE)
         self.image_list_tree.grid(row=0, column=0, sticky="nsew")
 
-        list_vscroll = ttk.Scrollbar(list_content_frame, orient="vertical", command=self.image_list_tree.yview) # Placed inside list_content_frame
+        list_vscroll = ttk.Scrollbar(list_content_frame, orient="vertical", command=self.image_list_tree.yview)
         self.image_list_tree.configure(yscrollcommand=list_vscroll.set)
         list_vscroll.grid(row=0, column=1, sticky="ns")
 
-        list_content_frame.grid_columnconfigure(0, weight=1) # Treeview fills internal Frame width
-        list_content_frame.grid_rowconfigure(0, weight=1) # Treeview fills internal Frame height
+        list_content_frame.grid_columnconfigure(0, weight=1)
+        list_content_frame.grid_rowconfigure(0, weight=1)
 
-        # Bind double click event
         self.image_list_tree.bind("<Double-1>", self.on_image_select)
-        self.image_list_tree.bind("<<TreeviewSelect>>", self.on_list_select) # Bind single click for status bar
+        self.image_list_tree.bind("<<TreeviewSelect>>", self.on_list_select)
+
+        exclude_button = ttk.Button(list_frame, text="Exclude/Include Selected")
+        exclude_button.grid(row=1, column=0, columnspan=2, pady=(10, 0))
+        exclude_button.config(command=self.toggle_exclude_selected)
+
+        # Image View (right side of calibration_setup_frame)
+        image_frame = ttk.LabelFrame(calibration_setup_frame, text="Image View", padding="10", style='TLabelframe')
+        image_frame.grid(row=0, column=1, sticky="nsew", rowspan=2) # Spans rows 0 and 1
+        calibration_setup_frame.grid_columnconfigure(1, weight=2) # Image area wider
+        calibration_setup_frame.grid_rowconfigure(0, weight=1) # Ensure this row containing settings_list_frame and image_frame expands
 
 
-        # Image exclusion button
-        exclude_button = ttk.Button(list_frame, text="Exclude/Include Selected") # This button is placed at the bottom of the LabelFrame, not inside the inner Frame
-        exclude_button.grid(row=1, column=0, columnspan=2, pady=(10, 0)) # Add top pady
-        exclude_button.config(command=self.toggle_exclude_selected) # Bind command
-
-
-        # Right image display area - Use LabelFrame for grouping, **do not specify style**, rely on default style (configured with white background), add padding
-        image_frame = ttk.LabelFrame(content_frame, text="Image View", padding="10") # Simpler title, add inner padding
-        image_frame.grid(row=0, column=1, sticky="nsew")
-        content_frame.grid_columnconfigure(1, weight=2) # Image area is wider
-        image_frame.grid_columnconfigure(0, weight=1) # Allow internal frame to expand
-        image_frame.grid_rowconfigure(0, weight=1) # Allow internal frame to expand
-
-        # In image_frame, create a white Frame to hold content
         image_content_frame = ttk.Frame(image_frame, style='TFrame')
-        image_content_frame.grid(row=0, column=0, sticky="nsew", columnspan=1) # Fill the content area of the LabelFrame
+        image_content_frame.grid(row=0, column=0, sticky="nsew")
         image_frame.grid_rowconfigure(0, weight=1)
         image_frame.grid_columnconfigure(0, weight=1)
 
+        self.image_label = ttk.Label(image_content_frame, style='TLabel', anchor='center', text="Image Preview", compound='image')
+        self.image_label.grid(row=0, column=0, sticky="nsew")
+        image_content_frame.grid_columnconfigure(0, weight=1)
+        image_content_frame.grid_rowconfigure(0, weight=1)
 
-        self.image_label = ttk.Label(image_content_frame, style='TLabel', anchor='center', text="Image Preview", compound='image') # Add default text
-        self.image_label.grid(row=0, column=0, sticky="nsew") # Use nsew to make the label fill the frame
-        image_content_frame.grid_columnconfigure(0, weight=1) # Label fills internal Frame width
-        image_content_frame.grid_rowconfigure(0, weight=1) # Label fills internal Frame height
-
-
-        self.current_image_info_label = ttk.Label(image_frame, text="", anchor="center", style='TLabel') # Placed at the bottom of the LabelFrame
-        self.current_image_info_label.grid(row=1, column=0, pady=(10, 0)) # Add top pady
+        self.current_image_info_label = ttk.Label(image_frame, text="", anchor="center", style='TLabel')
+        self.current_image_info_label.grid(row=1, column=0, pady=(10, 0))
 
 
-        # Bottom operation/results area - Use LabelFrame for grouping, **do not specify style**, rely on default style (configured with white background), add padding
-        bottom_frame = ttk.LabelFrame(main_frame, text="Results and Operations", padding="10") # Simpler title, add inner padding
-        bottom_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(15, 0)) # Add top pady
+        # --- Section 2: Calibration Results & Operations (inside Calibration Tab) ---
+        results_operations_frame = ttk.LabelFrame(calibration_tab, text="Calibration Results & Operations", padding="10", style='TLabelframe')
+        results_operations_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(15, 0)) # Below calibration_setup_frame
+        results_operations_frame.grid_columnconfigure(0, weight=1) # Only one content column
 
-
-        # --- Bottom Layout: Operations buttons and results display arranged vertically ---
-        # operation_frame placed in bottom_frame's row 0, column 0
-        # results_display_frame placed in bottom_frame's row 1, column 0
-        bottom_frame.grid_columnconfigure(0, weight=1) # Bottom area has only one column that needs to stretch
-        bottom_frame.grid_rowconfigure(0, weight=0) # Operation row does not need to stretch with window (or very small weight)
-        bottom_frame.grid_rowconfigure(1, weight=1) # Results display row needs to stretch with window
-
-
-        # Operation buttons and average error - Placed in bottom_frame's top row (row 0)
-        operation_frame = ttk.Frame(bottom_frame, style='TFrame') # Placed inside bottom_frame
-        # Placed in bottom_frame's row 0, column 0
+        # Operations buttons and average error (top part of results_operations_frame)
+        operation_frame = ttk.Frame(results_operations_frame, style='TFrame')
         operation_frame.grid(row=0, column=0, sticky="w") # Align left
 
-
         self.calibrate_button = ttk.Button(operation_frame, text="Start Calibration")
-        self.calibrate_button.grid(row=0, column=0, padx=(0, 15)) # Add right padx
-        self.calibrate_button.config(command=self.run_calibration) # Bind command
+        self.calibrate_button.grid(row=0, column=0, padx=(0, 15))
+        self.calibrate_button.config(command=self.run_calibration)
 
-        self.save_button = ttk.Button(operation_frame, text="Save Results...", state=tk.DISABLED) # Initially disabled
-        self.save_button.grid(row=0, column=1, padx=(0, 15)) # Add right padx
-        self.save_button.config(command=self.save_results) # Bind command
+        self.save_button = ttk.Button(operation_frame, text="Save Results...", state=tk.DISABLED)
+        self.save_button.grid(row=0, column=1, padx=(0, 15))
+        self.save_button.config(command=self.save_results)
 
-        self.validate_button = ttk.Button(operation_frame, text="Validate Calibration", state=tk.DISABLED) # Initially disabled
-        self.validate_button.grid(row=0, column=2, padx=(0, 20)) # Add right padx
-        self.validate_button.config(command=self.validate_calibration) # Bind command
+        self.validate_button = ttk.Button(operation_frame, text="Validate Calibration", state=tk.DISABLED)
+        self.validate_button.grid(row=0, column=2, padx=(0, 20))
+        self.validate_button.config(command=self.validate_calibration)
 
-        # Label applies default TLabel style
-        ttk.Label(operation_frame, text="Avg. Error:", style='TLabel').grid(row=0, column=3, padx=(0, 5)) # Simpler label, add right padx
-        self.avg_error_label = ttk.Label(operation_frame, text="N/A", width=10, style='TLabel') # Fixed width to prevent jumping, applies default TLabel style
+        ttk.Label(operation_frame, text="Avg. Error:", style='TLabel').grid(row=0, column=3, padx=(0, 5))
+        self.avg_error_label = ttk.Label(operation_frame, text="N/A", width=10, style='TLabel')
         self.avg_error_label.grid(row=0, column=4, sticky="w")
 
+        # Results display (matrices) (bottom part of results_operations_frame)
+        results_display_frame = ttk.Frame(results_operations_frame, style='TFrame')
+        results_display_frame.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        results_operations_frame.grid_rowconfigure(1, weight=1) # Let this frame expand
 
-        # Results display (using Text widget to display multi-line matrices) - Placed in bottom_frame's bottom row (row 1)
-        results_display_frame = ttk.Frame(bottom_frame, style='TFrame') # Use Frame to organize results display, applies default TFrame style
-        # Placed in bottom_frame's row 1, column 0
-        results_display_frame.grid(row=1, column=0, sticky="nsew", pady=(10, 0)) # Fill entire width, add top pady
+        results_display_frame.grid_columnconfigure(1, weight=1)
+        results_display_frame.grid_rowconfigure(0, weight=1)
+        results_display_frame.grid_rowconfigure(1, weight=1)
 
-        # Ensure controls inside results_display_frame can also stretch
-        results_display_frame.grid_columnconfigure(1, weight=1) # Make the second column where the text boxes are expand
-        results_display_frame.grid_rowconfigure(0, weight=1) # Make the first row (K matrix) expand
-        results_display_frame.grid_rowconfigure(1, weight=1) # Make the second row (D coefficients) expand
+        ttk.Label(results_display_frame, text="Camera Matrix K:", style='TLabel').grid(row=0, column=0, sticky="nw", padx=(0, 5))
+        self.matrix_k_text = tk.Text(results_display_frame, height=4, width=40, state=tk.DISABLED, wrap="word", bg='white', fg='black', relief='flat')
+        self.matrix_k_text.grid(row=0, column=1, sticky="nsew")
 
-
-        # Label applies default TLabel style
-        ttk.Label(results_display_frame, text="Camera Matrix K:", style='TLabel').grid(row=0, column=0, sticky="nw", padx=(0, 5)) # Top left alignment
-        # Use tk.Text and set background color directly, remove border
-        self.matrix_k_text = tk.Text(results_display_frame, height=4, width=40, state=tk.DISABLED, wrap="word", bg='white', fg='black', relief='flat') # Increase width
-        self.matrix_k_text.grid(row=0, column=1, sticky="nsew") # Fill right space
-
-        # Label applies default TLabel style
-        ttk.Label(results_display_frame, text="Distortion Coeffs D:", style='TLabel').grid(row=1, column=0, sticky="nw", padx=(0, 5), pady=(5, 0)) # Top left alignment
-        # Use tk.Text and set background color directly, remove border
-        self.dist_coeffs_text = tk.Text(results_display_frame, height=2, width=40, state=tk.DISABLED, wrap="word", bg='white', fg='black', relief='flat') # Increase width
-        self.dist_coeffs_text.grid(row=1, column=1, sticky="nsew", pady=(5, 0)) # Fill right space
+        ttk.Label(results_display_frame, text="Distortion Coeffs D:", style='TLabel').grid(row=1, column=0, sticky="nw", padx=(0, 5), pady=(5, 0))
+        self.dist_coeffs_text = tk.Text(results_display_frame, height=2, width=40, state=tk.DISABLED, wrap="word", bg='white', fg='black', relief='flat')
+        self.dist_coeffs_text.grid(row=1, column=1, sticky="nsew", pady=(5, 0))
 
 
-        # --- New: Single Image Undistortion Frame ---
-        undistort_frame = ttk.LabelFrame(main_frame, text="Undistort Single Image", padding="10")
-        undistort_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(15, 0)) # Below bottom_frame
-        undistort_frame.grid_columnconfigure(1, weight=1) # Path label takes space
+        # --- Tab 2: Single Image Undistortion Tool ---
+        undistort_tab = ttk.Frame(self.notebook, padding="10", style='TFrame')
+        self.notebook.add(undistort_tab, text='Undistort Single Image')
+        undistort_tab.grid_columnconfigure(0, weight=1) # Make the image path label column expandable
+
+        undistort_frame = ttk.LabelFrame(undistort_tab, text="Undistort Single Image Tool", padding="10", style='TLabelframe')
+        undistort_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 0)) # Fill the tab
+        undistort_frame.grid_columnconfigure(1, weight=1)
 
         ttk.Label(undistort_frame, text="Input Image:", style='TLabel').grid(row=0, column=0, sticky="w", padx=(0, 5))
 
         self.select_undistort_image_button = ttk.Button(undistort_frame, text="Select Image File...")
         self.select_undistort_image_button.grid(row=0, column=1, sticky="ew", padx=(0, 5))
-        self.select_undistort_image_button.config(command=self.select_undistort_image) # Bind command
+        self.select_undistort_image_button.config(command=self.select_undistort_image)
 
         self.undistort_image_path_label = ttk.Label(undistort_frame, text="No image selected", relief="sunken", anchor="w", style='TLabel')
-        self.undistort_image_path_label.grid(row=0, column=2, sticky="ew", padx=(0, 15)) # Moved to column 2
+        self.undistort_image_path_label.grid(row=0, column=2, sticky="ew", padx=(0, 15))
 
-        # Make column 1 (button) and column 2 (label) share the space better
-        undistort_frame.grid_columnconfigure(1, weight=0) # Button size is fixed
-        undistort_frame.grid_columnconfigure(2, weight=1) # Label takes remaining space
+        undistort_frame.grid_columnconfigure(1, weight=0)
+        undistort_frame.grid_columnconfigure(2, weight=1)
 
-
-        self.run_undistort_button = ttk.Button(undistort_frame, text="Undistort and Save...", state=tk.DISABLED) # Initially disabled
-        self.run_undistort_button.grid(row=1, column=0, columnspan=3, pady=(10, 0)) # Span across all columns
-        self.run_undistort_button.config(command=self.run_undistort_and_save) # Bind command
+        self.run_undistort_button = ttk.Button(undistort_frame, text="Undistort and Save...", state=tk.DISABLED)
+        self.run_undistort_button.grid(row=1, column=0, columnspan=3, pady=(10, 0))
+        self.run_undistort_button.config(command=self.run_undistort_and_save)
 
 
-        # Bottommost status bar - sunken style adds a sense of depth, applies default TLabel style
-        self.status_bar = ttk.Label(master, text="Please select image folder...", relief="sunken", anchor="w", style='TLabel')
-        # Placed in row 4 below the new undistort frame
-        self.status_bar.grid(row=4, column=0, columnspan=2, sticky="ew")
+        # --- Tab 3: Camera Capture Tool ---
+        capture_tab = ttk.Frame(self.notebook, padding="10", style='TFrame')
+        self.notebook.add(capture_tab, text='Camera Capture')
+        capture_tab.grid_columnconfigure(0, weight=1) # Controls column
+        capture_tab.grid_columnconfigure(1, weight=2) # Preview column
+        capture_tab.grid_rowconfigure(0, weight=1) # Capture frame row
+
+        capture_frame = ttk.LabelFrame(capture_tab, text="Camera Capture Tool", padding="10", style='TLabelframe')
+        capture_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 0)) # Fill the tab
+        capture_frame.grid_columnconfigure(0, weight=1)
+        capture_frame.grid_columnconfigure(1, weight=2) # Preview column wider
+        capture_frame.grid_rowconfigure(0, weight=1) # Settings row doesn't need stretch
+        capture_frame.grid_rowconfigure(1, weight=1) # Row with preview should expand
 
 
-        # Ensure some areas resize when window size changes (re-confirming these configurations)
-        main_frame.grid_columnconfigure(0, weight=1)
-        main_frame.grid_rowconfigure(1, weight=1) # content_frame changes with height
-        content_frame.grid_columnconfigure(0, weight=1) # list_frame changes with width
-        content_frame.grid_columnconfigure(1, weight=2) # image_frame changes with width faster
-        content_frame.grid_rowconfigure(0, weight=1) # list_frame and image_frame change with height
-        # Ensure the inner content frames within LabelFrames expand correctly
-        image_frame.grid_columnconfigure(0, weight=1)
-        image_frame.grid_rowconfigure(0, weight=1)
-        list_frame.grid_columnconfigure(0, weight=1)
-        list_frame.grid_rowconfigure(0, weight=1)
-        control_frame.grid_columnconfigure(0, weight=1)
-        control_frame.grid_rowconfigure(0, weight=1)
-        bottom_frame.grid_columnconfigure(0, weight=1)
-        bottom_frame.grid_rowconfigure(0, weight=0)
-        bottom_frame.grid_rowconfigure(1, weight=1)
-        undistort_frame.grid_columnconfigure(2, weight=1) # Ensure undistort path label expands
+        # Capture Settings and Controls (left side)
+        capture_controls_frame = ttk.Frame(capture_frame, style='TFrame')
+        capture_controls_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), rowspan=2) # Spans two rows
+        capture_controls_frame.grid_columnconfigure(1, weight=1)
 
-        # Make sure the status bar row also expands horizontally
-        master.grid_columnconfigure(0, weight=1) # This was already set, just reconfirming
+        ttk.Label(capture_controls_frame, text="Camera Index:", style='TLabel').grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.entry_camera_index = ttk.Entry(capture_controls_frame, width=5)
+        self.entry_camera_index.grid(row=0, column=1, sticky="ew", padx=(0, 0))
+        self.entry_camera_index.insert(0, "0")
+
+        ttk.Label(capture_controls_frame, text="Interval (s):", style='TLabel').grid(row=1, column=0, sticky="w", padx=(0, 5), pady=(5,0))
+        self.entry_capture_interval = ttk.Entry(capture_controls_frame, width=5)
+        self.entry_capture_interval.grid(row=1, column=1, sticky="ew", padx=(0, 0), pady=(5,0))
+
+        ttk.Label(capture_controls_frame, text="Total Photos:", style='TLabel').grid(row=2, column=0, sticky="w", padx=(0, 5), pady=(5,0))
+        self.entry_total_photos = ttk.Entry(capture_controls_frame, width=5)
+        self.entry_total_photos.grid(row=2, column=1, sticky="ew", padx=(0, 0), pady=(5,0))
+
+        ttk.Label(capture_controls_frame, text="Output Folder:", style='TLabel').grid(row=3, column=0, sticky="nw", padx=(0, 5), pady=(10,0))
+        self.select_capture_folder_button = ttk.Button(capture_controls_frame, text="Select Folder...")
+        self.select_capture_folder_button.grid(row=3, column=1, sticky="ew", padx=(0, 0), pady=(10,0))
+        self.select_capture_folder_button.config(command=self.select_capture_folder)
+
+        self.capture_output_folder_label = ttk.Label(capture_controls_frame, text="No folder selected", relief="sunken", anchor="w", style='TLabel', wraplength=200)
+        self.capture_output_folder_label.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(5,0))
+
+        self.start_capture_button = ttk.Button(capture_controls_frame, text="Start Capture")
+        self.start_capture_button.grid(row=5, column=0, sticky="ew", pady=(10, 5))
+        self.start_capture_button.config(command=self.start_capture)
+
+        self.stop_capture_button = ttk.Button(capture_controls_frame, text="Stop Capture", state=tk.DISABLED)
+        self.stop_capture_button.grid(row=5, column=1, sticky="ew", pady=(10, 5))
+        self.stop_capture_button.config(command=self.stop_capture)
+
+        self.capture_status_label = ttk.Label(capture_controls_frame, text="Idle", anchor="w", style='TLabel', wraplength=250)
+        self.capture_status_label.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(5,0))
+
+
+        # Camera Preview Area (right side)
+        capture_preview_frame = ttk.Frame(capture_frame, style='TFrame')
+        capture_preview_frame.grid(row=0, column=1, sticky="nsew", rowspan=2) # Spans rows 0 and 1 in capture_frame
+        capture_preview_frame.grid_columnconfigure(0, weight=1)
+        capture_preview_frame.grid_rowconfigure(0, weight=1)
+
+        self.camera_preview_label = ttk.Label(capture_preview_frame, style='TLabel', anchor='center', text="Camera Preview", compound='image')
+        self.camera_preview_label.grid(row=0, column=0, sticky="nsew")
+
+        # Let the capture frame's preview column expand more than controls
+        capture_frame.grid_columnconfigure(0, weight=1)
+        capture_frame.grid_columnconfigure(1, weight=2)
+
+
+        # Bottommost status bar - This stays outside the Notebook
+        self.status_bar = ttk.Label(main_frame, text="Ready", relief="sunken", anchor="w", style='TLabel') # Set default status
+        self.status_bar.grid(row=1, column=0, sticky="ew") # Below the notebook
+
+
+        # Configure main_frame row weights
+        # Row 0 now contains the notebook, which expands
+        # Row 1 contains the status bar, which has fixed height
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_rowconfigure(1, weight=0)
 
 
     # --- Core method implementation ---
@@ -629,7 +682,7 @@ class MinimalistCalibratorGUI:
                                 self.image_list_tree.item(item_id, values=(error_text, 'Success'), tags=()) # Clear tags
                             except ValueError:
                                 # Should not happen, but handle defensively
-                                self.image_list_tree.item(item_id, values=('', ''), tags=()) # If error not found, clear
+                                self.image_list_tree.item(item_id, values=('', ''), tags=())
                         else:
                              # If it was a 'find failed' image, restore to initial state (no status, no error)
                              self.image_list_tree.item(item_id, values=('', ''), tags=())
@@ -900,6 +953,17 @@ class MinimalistCalibratorGUI:
         self.save_button.config(state=tk.DISABLED)
         self.validate_button.config(state=tk.DISABLED)
         self.run_undistort_button.config(state=tk.DISABLED) # Disable undistort button
+        # Keep camera capture state if active? No, probably reset.
+        self.stop_capture() # Ensure capture is stopped
+        self.capture_output_folder = None
+        self.capture_output_folder_label.config(text="No folder selected")
+        self.capture_status_label.config(text="Idle")
+        self.entry_camera_index.delete(0, tk.END) # Clear and reset defaults
+        self.entry_camera_index.insert(0, "0")
+        self.entry_capture_interval.delete(0, tk.END)
+        self.entry_capture_interval.insert(0, "1.0")
+        self.entry_total_photos.delete(0, tk.END)
+        self.entry_total_photos.insert(0, "20")
 
 
     def save_results(self):
@@ -980,7 +1044,7 @@ class MinimalistCalibratorGUI:
         image_compare_frame.grid_rowconfigure(0, weight=1) # Allow image frames to expand vertically
 
         # Frame for Original Image
-        original_image_frame = ttk.LabelFrame(image_compare_frame, text="Original Image (with distorted grid)", padding=5) # Updated title
+        original_image_frame = ttk.LabelFrame(image_compare_frame, text="Original Image (with distorted grid)", padding=5, style='TLabelframe') # Updated title
         original_image_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5)) # Left side, add right padding
         original_image_frame.grid_columnconfigure(0, weight=1)
         original_image_frame.grid_rowconfigure(0, weight=1)
@@ -989,7 +1053,7 @@ class MinimalistCalibratorGUI:
         self.validation_original_label.grid(row=0, column=0, sticky="nsew")
 
         # Frame for Undistorted Image
-        undistorted_image_frame = ttk.LabelFrame(image_compare_frame, text="Undistorted Image (with straight grid)", padding=5) # Updated title
+        undistorted_image_frame = ttk.LabelFrame(image_compare_frame, text="Undistorted Image (with straight grid)", padding=5, style='TLabelframe') # Updated title
         undistorted_image_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0)) # Right side, add left padding
         undistorted_image_frame.grid_columnconfigure(0, weight=1)
         undistorted_image_frame.grid_rowconfigure(0, weight=1)
@@ -1048,7 +1112,12 @@ class MinimalistCalibratorGUI:
             try:
                 # Use the image size of the image being undistorted
                 h_img, w_img = img.shape[:2]
-                img_size_current = (w_img, h_img)
+                # We can use getOptimalNewCameraMatrix here to potentially remove black borders
+                # new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(self.camera_matrix, self.dist_coeffs, (w_img, h_img), 1, (w_img, h_img))
+                # undistorted_img = cv2.undistort(img.copy(), self.camera_matrix, self.dist_coeffs, None, new_camera_matrix)
+                # # Crop the image
+                # x, y, w, h = roi
+                # undistorted_img = undistorted_img[y:y+h, x:x+w]
 
                 # Simple undistortion (might have black borders)
                 undistorted_img = cv2.undistort(img.copy(), self.camera_matrix, self.dist_coeffs)
@@ -1064,6 +1133,7 @@ class MinimalistCalibratorGUI:
 
 
             # --- Draw Grids for Visualization ---
+            undistorted_img_with_straight_grid = None
             if undistorted_img is not None:
                 self.status_bar.config(text=f"Image undistorted: {filename}. Drawing grids...")
                 self.master.update_idletasks()
@@ -1091,93 +1161,82 @@ class MinimalistCalibratorGUI:
 
 
                 # --- Draw Distorted Grid on Original Image ---
-                # We will define a 3D grid plane and project its points to the original image
-                # This shows how straight lines in the world project with distortion.
-                # Assuming a Z=0 plane relative to the camera origin.
-                # The size of the 3D grid impacts what part of the distortion is visible.
-                # Let's create a grid that spans a reasonable range, e.g., based on image size / focal length.
-                # Approximate FOV mapping at Z=1: X_range ~= W_px / fx, Y_range ~= H_px / fy
-                # We need points at Z=0, so use a distance factor.
-                # Let's create a grid in a 3D plane that roughly covers the image area.
-                # The density of points should be high enough to show curvature.
-                grid_density_3d = 20 # Points per dimension for a square region in 3D
-                # Estimate the range of X and Y in 3D (at Z=0) to cover the image FOV
-                # Using average focal length and assuming image center projects to origin
+                # We will project 3D grid points (on a Z=0 plane in camera frame) to the original image using distortion coeffs
                 try:
+                    h_orig, w_orig = original_img_with_distorted_grid.shape[:2]
+                    # Determine 3D grid extent roughly based on original image size and focal length
                     fx = self.camera_matrix[0, 0]
                     fy = self.camera_matrix[1, 1]
-                    cx = self.camera_matrix[0, 2]
-                    cy = self.camera_matrix[1, 2]
-                    h_img, w_img = img.shape[:2]
+                    # Define a 3D grid spacing in "virtual" units, e.g., corresponding to 50 pixels at a unit distance
+                    # A grid interval of 50 pixels in the image corresponds roughly to a physical size of 50 / f at unit distance.
+                    grid_interval_3d_x = grid_interval_px / fx
+                    grid_interval_3d_y = grid_interval_px / fy
 
-                    # Estimate the 3D coordinates (X,Y) that project to the image corners/edges
-                    # This is tricky without knowing the Z distance. Let's assume a virtual plane distance D=1.0 for scaling the 3D grid.
-                    # X = (u - cx) * Z / fx, Y = (v - cy) * Z / fy. At Z=D.
-                    # Let's make the 3D grid span a range based on pixel dimensions scaled by inverse focal length.
-                    # A grid covering +/- W_px / (2*fx) and +/- H_px / (2*fy) at Z=1 might be too small or large.
-                    # Let's use a fixed range based on typical board dimensions, scaled by square size.
-                    # Assuming the grid plane is somewhere in front of the camera.
-                    # Create points for lines parallel to X axis and Y axis in 3D.
-                    # Define lines in the XZ plane and YZ plane (or XY plane at Z=const). Let's use XY at Z=0.
+                    # Create 3D points for lines. Start from a point that projects near the top-left corner.
+                    # Approximate top-left 3D point assuming principal point is image center
+                    start_x_3d = -(w_orig / 2.0) / fx * 1.0 # Assuming Z=1.0 for scaling
+                    start_y_3d = -(h_orig / 2.0) / fy * 1.0
 
-                    # Points for horizontal lines (constant Y, varying X)
-                    points_3d_horizontal = []
-                    y_values_3d = np.linspace(-h_img / (2*fy), h_img / (2*fy), grid_density_3d) # Y values in a projected plane at Z=1
-                    x_values_3d = np.linspace(-w_img / (2*fx), w_img / (2*fx), grid_density_3d * 2) # Wider X range
+                    # Create a grid of 3D points (X, Y, 0)
+                    points_3d = []
+                    # Create points for horizontal lines (varying X, constant Y)
+                    for i in range(int(h_orig / grid_interval_px) + 2): # Add buffer
+                         y_3d = start_y_3d + i * grid_interval_3d_y
+                         for j in range(int(w_orig / grid_interval_px) * 2 + 2): # Wider X range
+                             x_3d = start_x_3d + j * grid_interval_3d_x
+                             points_3d.append((x_3d, y_3d, 0))
 
-                    for y in y_values_3d:
-                        for x in x_values_3d:
-                            points_3d_horizontal.append((x, y, 0)) # Assume Z=0 plane
+                    # Create points for vertical lines (constant X, varying Y)
+                    for j in range(int(w_orig / grid_interval_px) + 2): # Add buffer
+                         x_3d = start_x_3d + j * grid_interval_3d_x
+                         for i in range(int(h_orig / grid_interval_px) * 2 + 2): # Wider Y range
+                             y_3d = start_y_3d + i * grid_interval_3d_y
+                             points_3d.append((x_3d, y_3d, 0))
 
-                    # Points for vertical lines (constant X, varying Y)
-                    points_3d_vertical = []
-                    x_values_3d_vert = np.linspace(-w_img / (2*fx), w_img / (2*fx), grid_density_3d) # X values
-                    y_values_3d_vert = np.linspace(-h_img / (2*fy), h_img / (2*fy), grid_density_3d * 2) # Wider Y range
+                    points_3d = np.array(points_3d, dtype=np.float32)
 
-                    for x in x_values_3d_vert:
-                         for y in y_values_3d_vert:
-                             points_3d_vertical.append((x, y, 0)) # Assume Z=0 plane
+                    # Project points to original image plane
+                    rvec_ident = np.zeros(3, dtype=np.float32) # Identity rotation (camera looking perpendicular to plane)
+                    tvec_zero = np.array([0.0, 0.0, 1.0], dtype=np.float32) # Translation to place the plane at Z=1.0 in front of camera
 
+                    projected_points, _ = cv2.projectPoints(points_3d, rvec_ident, tvec_zero, self.camera_matrix, self.dist_coeffs)
 
-                    points_3d_horizontal = np.array(points_3d_horizontal, dtype=np.float32)
-                    points_3d_vertical = np.array(points_3d_vertical, dtype=np.float32)
+                    # Reshape projected points to extract lines
+                    num_horizontal_lines = int(h_orig / grid_interval_px) + 2
+                    num_vertical_lines = int(w_orig / grid_interval_px) + 2
+                    points_per_hline = int(w_orig / grid_interval_px) * 2 + 2
+                    points_per_vline = int(h_orig / grid_interval_px) * 2 + 2
 
-                    # Project points to original image plane using camera matrix and distortion coefficients
-                    # Assuming identity rotation and zero translation for projection from camera frame Z=0 plane
-                    rvec_ident = np.zeros(3, dtype=np.float32) # Corresponds to identity rotation
-                    tvec_zero = np.zeros(3, dtype=np.float32) # Corresponds to zero translation
+                    projected_h_lines = projected_points[:num_horizontal_lines * points_per_hline].reshape(num_horizontal_lines, points_per_hline, 2)
+                    projected_v_lines = projected_points[num_horizontal_lines * points_per_hline:].reshape(num_vertical_lines, points_per_vline, 2)
 
-                    projected_points_horizontal, _ = cv2.projectPoints(points_3d_horizontal, rvec_ident, tvec_zero, self.camera_matrix, self.dist_coeffs)
-                    projected_points_vertical, _ = cv2.projectPoints(points_3d_vertical, rvec_ident, tvec_zero, self.camera_matrix, self.dist_coeffs)
-
-                    # Reshape projected points
-                    projected_points_horizontal = projected_points_horizontal.reshape(-1, len(x_values_3d), 2)
-                    projected_points_vertical = projected_points_vertical.reshape(-1, len(y_values_3d_vert), 2)
 
                     # Draw lines on the original image copy
-                    # Color for distorted grid (e.g., Red)
-                    distorted_line_color = (0, 0, 255) # Red in BGR
+                    distorted_line_color = (0, 255, 255) # Yellow color in BGR (more visible)
                     distorted_line_thickness = 1
 
                     # Draw horizontal distorted lines
-                    for line_points in projected_points_horizontal:
-                        for i in range(len(line_points) - 1):
-                            p1 = tuple(map(int, line_points[i]))
-                            p2 = tuple(map(int, line_points[i+1]))
+                    for line_points in projected_h_lines:
+                        # Sort points by x-coordinate to draw line segments correctly
+                        line_points_sorted = line_points[line_points[:, 0].argsort()]
+                        for i in range(len(line_points_sorted) - 1):
+                            p1 = tuple(map(int, line_points_sorted[i]))
+                            p2 = tuple(map(int, line_points_sorted[i+1]))
                             # Check if points are within image bounds before drawing (optional)
-                            if 0 <= p1[0] < w_img and 0 <= p1[1] < h_img and \
-                               0 <= p2[0] < w_img and 0 <= p2[1] < h_img:
-                                cv2.line(original_img_with_distorted_grid, p1, p2, distorted_line_color, distorted_line_thickness)
+                            # Removed boundary check for simplicity, lines might go outside
+                            cv2.line(original_img_with_distorted_grid, p1, p2, distorted_line_color, distorted_line_thickness)
+
 
                     # Draw vertical distorted lines
-                    for line_points in projected_points_vertical:
-                        for i in range(len(line_points) - 1):
-                            p1 = tuple(map(int, line_points[i]))
-                            p2 = tuple(map(int, line_points[i+1]))
+                    for line_points in projected_v_lines:
+                         # Sort points by y-coordinate to draw line segments correctly
+                         line_points_sorted = line_points[line_points[:, 1].argsort()]
+                         for i in range(len(line_points_sorted) - 1):
+                             p1 = tuple(map(int, line_points_sorted[i]))
+                             p2 = tuple(map(int, line_points_sorted[i+1]))
                              # Check if points are within image bounds before drawing (optional)
-                            if 0 <= p1[0] < w_img and 0 <= p1[1] < h_img and \
-                               0 <= p2[0] < w_img and 0 <= p2[1] < h_img:
-                                cv2.line(original_img_with_distorted_grid, p1, p2, distorted_line_color, distorted_line_thickness)
+                             # Removed boundary check for simplicity, lines might go outside
+                             cv2.line(original_img_with_distorted_grid, p1, p2, distorted_line_color, distorted_line_thickness)
 
 
                 except Exception as e:
@@ -1320,8 +1379,8 @@ class MinimalistCalibratorGUI:
 
             # Perform Undistortion
             # Use the image size of the image being undistorted
-            h_img, w_img = img.shape[:2]
-            img_size_current = (w_img, h_img)
+            # h_img, w_img = img.shape[:2]
+            # img_size_current = (w_img, h_img)
 
             # Use getOptimalNewCameraMatrix and undistort to handle cropping/scaling
             # new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(self.camera_matrix, self.dist_coeffs, img_size_current, 1, img_size_current) # Alpha=1 retains all pixels
@@ -1375,10 +1434,229 @@ class MinimalistCalibratorGUI:
         else:
             self.status_bar.config(text="Save operation cancelled.")
 
+    # --- New Camera Capture Feature Methods ---
+
+    def select_capture_folder(self):
+        """Open folder selection dialog to save captured images."""
+        folder_selected = filedialog.askdirectory(title="Select Folder to Save Photos")
+        if folder_selected:
+            self.capture_output_folder = folder_selected
+            self.capture_output_folder_label.config(text=folder_selected)
+            self.status_bar.config(text=f"Selected photo save folder: {folder_selected}")
+        else:
+            self.capture_output_folder = None
+            self.capture_output_folder_label.config(text="No folder selected")
+            self.status_bar.config(text="Photo save folder selection cancelled.")
+
+    def start_capture(self):
+        """Start timed camera capture."""
+        if self.is_capturing_preview: # Check preview status as well
+            messagebox.showwarning("Warning", "Camera capture or preview is already in progress.")
+            return
+
+        # Validate inputs
+        try:
+            camera_index = int(self.entry_camera_index.get())
+            interval_sec = float(self.entry_capture_interval.get())
+            total_photos = int(self.entry_total_photos.get())
+            if interval_sec <= 0 or total_photos <= 0:
+                raise ValueError("Interval and total photos must be positive.")
+            if camera_index < 0:
+                raise ValueError("Camera index must be non-negative.")
+        except ValueError as e:
+            messagebox.showerror("Invalid Input", f"Please check camera settings inputs:\n{e}")
+            self.status_bar.config(text="Capture start failed: Invalid settings.")
+            return
+
+        if self.capture_output_folder is None or not os.path.isdir(self.capture_output_folder):
+            messagebox.showwarning("Warning", "Please select a valid output folder for photos.")
+            self.status_bar.config(text="Capture start failed: No output folder selected.")
+            return
+
+        # Initialize camera
+        self.status_bar.config(text=f"Opening camera {camera_index}...")
+        self.master.update_idletasks()
+        try:
+            self.camera_cap = cv2.VideoCapture(camera_index)
+            if not self.camera_cap.isOpened():
+                raise IOError(f"Cannot open camera {camera_index}")
+
+            # Optionally set camera resolution (may not work on all cameras/platforms)
+            # self.camera_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            # self.camera_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+        except Exception as e:
+            error_msg = f"Error accessing camera {camera_index}: {e}"
+            self.status_bar.config(text="Capture start failed: " + error_msg)
+            messagebox.showerror("Camera Error", error_msg)
+            self.camera_cap = None # Ensure cap is None on failure
+            return
+
+        # Set capture parameters
+        self.is_capturing = True # Flag for timed saving
+        self.is_capturing_preview = True # Flag for continuous preview
+        self.capture_count = 0
+        self.total_capture_count = total_photos
+        self.capture_interval_ms = int(interval_sec * 1000) # Convert seconds to milliseconds
+
+        # Update GUI state
+        self.start_capture_button.config(state=tk.DISABLED)
+        self.stop_capture_button.config(state=tk.NORMAL)
+        self.capture_status_label.config(text=f"Capturing 0/{self.total_capture_count}...")
+        self.status_bar.config(text="Camera capture and preview started.")
+        self.camera_preview_label.config(text="Previewing...") # Update preview label
+
+        # Start the continuous preview update loop
+        self.update_preview()
+
+        # Start the timed capture saving process
+        self.schedule_capture_save()
+
+
+    def update_preview(self):
+        """Read a frame from camera and update the preview label."""
+        if self.is_capturing_preview and self.camera_cap is not None:
+            ret, frame = self.camera_cap.read()
+            if ret:
+                self.last_frame = frame # Store the last read frame
+
+                # Convert frame for Tkinter display
+                preview_width = self.camera_preview_label.winfo_width()
+                preview_height = self.camera_preview_label.winfo_height()
+
+                tk_img, error_msg = cv2_to_tk(frame, preview_width, preview_height)
+
+                if tk_img:
+                    self.camera_preview_label.config(image=tk_img, text="") # Update label with new frame
+                    self.camera_preview_label.image = tk_img # Keep reference
+                else:
+                    # Handle preview display error
+                    self.camera_preview_label.config(image='', text=f"Preview Error:\n{error_msg}")
+                    self.camera_preview_label.image = None
+                    # Don't stop capture just because preview display fails, but log it
+                    print(f"Preview display error: {error_msg}")
+
+
+            else:
+                # Handle frame read error from camera
+                error_msg = "Error reading frame from camera."
+                self.status_bar.config(text="Capture error: " + error_msg)
+                self.capture_status_label.config(text="Preview Failed!")
+                self.camera_preview_label.config(image='', text="Camera Error")
+                self.camera_preview_label.image = None
+                messagebox.showerror("Camera Error", error_msg + "\nStopping capture.")
+                self.stop_capture() # Stop capture on frame read error
+
+
+            # Schedule the next preview update
+            if self.is_capturing_preview:
+                # Run update_preview again after a short delay (e.g., 30ms for ~30fps)
+                self.preview_after_id = self.master.after(30, self.update_preview)
+
+
+    def schedule_capture_save(self):
+        """Schedule the next photo capture save."""
+        if self.is_capturing and self.capture_count < self.total_capture_count:
+            # Schedule the _capture_photo_save method to run after the interval
+            self.capture_after_id = self.master.after(self.capture_interval_ms, self._capture_photo_save)
+        elif self.is_capturing and self.capture_count >= self.total_capture_count:
+            # Capture finished
+            self.stop_capture()
+            self.capture_status_label.config(text=f"Capture Complete: {self.capture_count} photos saved.")
+            self.status_bar.config(text="Camera capture finished.")
+            messagebox.showinfo("Capture Complete", f"Successfully captured {self.capture_count} photos.")
+
+
+    def _capture_photo_save(self):
+        """Internal method to save the last captured photo."""
+        if not self.is_capturing or self.camera_cap is None:
+             # This might happen if stop_capture was called between schedule and execution
+             return
+
+        if self.last_frame is not None:
+            self.capture_count += 1
+            timestamp = int(time.time()) # Use timestamp for unique filename
+            filename = f"photo_{timestamp}_{self.capture_count}.png" # Suggest png format
+            filepath = os.path.join(self.capture_output_folder, filename)
+
+            try:
+                cv2.imwrite(filepath, self.last_frame) # Save the last frame read by update_preview
+                self.capture_status_label.config(text=f"Captured {self.capture_count}/{self.total_capture_count}: {filename}")
+                self.status_bar.config(text=f"Saved photo: {filepath}")
+                self.last_frame = None # Clear the frame after saving
+
+            except Exception as e:
+                error_msg = f"Error saving photo {filename}: {e}"
+                self.status_bar.config(text="Capture error: " + error_msg)
+                print(error_msg) # Print to console for debugging
+                # Decide whether to stop on error or continue. Let's continue for now but log error.
+
+            # Schedule the next save if not done
+            if self.is_capturing and self.capture_count < self.total_capture_count:
+                 self.schedule_capture_save() # Schedule next photo
+            elif self.is_capturing and self.capture_count >= self.total_capture_count:
+                 # Capture finished after saving the last photo
+                 self.schedule_capture_save() # Call schedule_capture_save one last time to trigger stop_capture
+
+
+        else:
+             # This means update_preview hasn't successfully read a frame yet
+             error_msg = "No frame available to save."
+             self.status_bar.config(text="Capture warning: " + error_msg)
+             self.capture_status_label.config(text=f"Waiting for frame ({self.capture_count}/{self.total_capture_count})...")
+             # Reschedule saving after a short delay, hoping a frame becomes available
+             if self.is_capturing and self.capture_count < self.total_capture_count:
+                  self.capture_after_id = self.master.after(100, self._capture_photo_save) # Try again in 100ms
+
+
+    def stop_capture(self):
+        """Stop camera capture."""
+        # Cancel both preview and save loops
+        if self.preview_after_id:
+            self.master.after_cancel(self.preview_after_id)
+            self.preview_after_id = None
+        if self.capture_after_id:
+            self.master.after_cancel(self.capture_after_id)
+            self.capture_after_id = None
+
+        self.is_capturing = False
+        self.is_capturing_preview = False
+        self.last_frame = None # Clear stored frame
+
+        if self.camera_cap is not None:
+            self.camera_cap.release() # Release camera resource
+            self.camera_cap = None
+            self.status_bar.config(text="Camera capture stopped.")
+            # Update status label based on whether capture finished or was stopped manually
+            if self.capture_count >= self.total_capture_count:
+                 self.capture_status_label.config(text=f"Capture Complete: {self.capture_count} photos saved.")
+            else:
+                 self.capture_status_label.config(text=f"Capture Stopped at {self.capture_count} photos.")
+
+            # Reset preview label
+            self.camera_preview_label.config(image='', text="Camera Preview")
+            self.camera_preview_label.image = None
+
+            self.start_capture_button.config(state=tk.NORMAL)
+            self.stop_capture_button.config(state=tk.DISABLED)
+        else:
+             # This case might happen if camera initialization failed but stop was called
+             self.status_bar.config(text="Capture stopping initiated. Camera was not active.")
+             self.capture_status_label.config(text="Idle.")
+             self.start_capture_button.config(state=tk.NORMAL)
+             self.stop_capture_button.config(state=tk.DISABLED)
+
 
     def run(self):
         """Start the Tkinter main loop"""
+        # Ensure camera resource is released when the window is closed
+        self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.master.mainloop()
+
+    def on_closing(self):
+        """Handle window closing event."""
+        self.stop_capture() # Stop camera capture before closing
+        self.master.destroy() # Close the window
 
 
 # --- Main program entry point ---
