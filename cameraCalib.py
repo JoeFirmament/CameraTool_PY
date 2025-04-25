@@ -1630,7 +1630,7 @@ class MinimalistCalibratorGUI:
             # Schedule the _capture_photo_save method to run after the interval
             countdown_seconds = 3 #倒计时3 秒
         # 使用 self.capture_interval_ms 作为延迟时间
-        self.capture_after_id = self.master.after(self.capture_interval_ms,
+            self.capture_after_id = self.master.after(self.capture_interval_ms,
                                                  self.run_capture_countdown,
                                                  countdown_seconds) # <--- 调度倒计时方法            
         #    self.capture_after_id = self.master.after(self.capture_interval_ms, self._capture_photo_save)
