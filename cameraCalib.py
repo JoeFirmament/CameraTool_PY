@@ -40,15 +40,13 @@ def cv2_to_tk(cv2_img, display_width, display_height):
 
     img_width, img_height = img_pil.size
 
-    # Avoid division by zero or incorrect resizing if widget size is not ready
+    # Avoid division by zero or incorrect resizing if display_width/height are not valid
     if display_width <= 1 or display_height <= 1:
-         # Use default reasonable size if actual widget size is not available yet
-         # print(f"Warning: Display area size <= 1. Using default size.") # Debug print
-         display_width = 640 # Default preview size
-         display_height = 480 # Default preview size
-         # Check if display_width/height are still <= 1 after fallback
-         if display_width <= 1 or display_height <= 1:
-             return (None, f"Invalid display dimensions after fallback: {display_width}x{display_height}")
+        # Fallback to original image size or a default size if target is invalid
+        # Using original image size will prevent display errors, but won't enforce fixed display size
+        # For fixed size preview, the calling code should provide valid display_width/height
+        # Returning error if called with invalid dimensions as per design intent of this helper.
+         return (None, f"Invalid target display dimensions provided to cv2_to_tk: {display_width}x{display_height}")
 
 
     # Calculate scaling factor
@@ -168,6 +166,9 @@ class MinimalistCalibratorGUI:
         self.capture_after_id = None # To store the ID returned by master.after
         self.preview_after_id = None # To store the ID returned by master.after for preview
         self.last_frame = None # Store the last frame read from camera
+        # Fixed preview size
+        self.preview_width = 640  # Fixed preview width
+        self.preview_height = 480 # Fixed preview height
 
 
         # --- GUI Layout ---
@@ -367,19 +368,19 @@ class MinimalistCalibratorGUI:
         capture_tab = ttk.Frame(self.notebook, padding="10", style='TFrame')
         self.notebook.add(capture_tab, text='Camera Capture')
         capture_tab.grid_columnconfigure(0, weight=0) # Controls column - fixed width
-        capture_tab.grid_columnconfigure(1, weight=1) # Preview column - expands
-        capture_tab.grid_rowconfigure(0, weight=1) # Capture frame row - expands
+        capture_tab.grid_columnconfigure(1, weight=1) # Preview column - expands to fill available space
+        capture_tab.grid_rowconfigure(0, weight=1) # Capture frame row - expands to fill available space
 
         capture_frame = ttk.LabelFrame(capture_tab, text="Camera Capture Tool", padding="10", style='TLabelframe')
         capture_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 0)) # Fill the tab
-        # Removed weights from capture_frame columns and rows
+        # Removed weights from capture_frame columns and rows, rely on capture_tab weights
         capture_frame.grid_columnconfigure(0, weight=0) # Controls column - fixed width
         capture_frame.grid_columnconfigure(1, weight=1) # Preview column - expands
 
         # Capture Settings and Controls (left side)
         capture_controls_frame = ttk.Frame(capture_frame, style='TFrame')
-        # Removed sticky nsew from capture_controls_frame
-        capture_controls_frame.grid(row=0, column=0, padx=(0, 10), rowspan=2) # Placed in column 0, row 0
+        # Removed sticky nsew from capture_controls_frame to allow it to take its natural size
+        capture_controls_frame.grid(row=0, column=0, padx=(0, 10), rowspan=2, sticky="ns") # Placed in column 0, row 0, sticky ns to fill vertically
         capture_controls_frame.grid_columnconfigure(1, weight=1) # Allow widgets within controls to expand
 
         ttk.Label(capture_controls_frame, text="Camera Index:", style='TLabel').grid(row=0, column=0, sticky="w", padx=(0, 5))
@@ -417,26 +418,16 @@ class MinimalistCalibratorGUI:
 
         # Camera Preview Area (right side)
         capture_preview_frame = ttk.Frame(capture_frame, style='TFrame')
-        # Set a fixed size for the preview frame (adjust width/height as needed)
-        # You might want to determine this size based on common camera resolutions
-        # or make it configurable. For now, using a reasonable fixed size.
-        # Example: 640x480 is a common webcam resolution
-        preview_width = 640
-        preview_height = 480
-        capture_preview_frame.config(width=preview_width, height=preview_height)
+        # Set a fixed size for the preview frame using the predefined preview_width and preview_height
+        capture_preview_frame.config(width=self.preview_width, height=self.preview_height)
+        # Explicitly prevent this frame from propagating its children's size to its parent
+        capture_preview_frame.grid_propagate(False) # This is key to preventing growth
 
-        # Use pack instead of grid for the preview label within its frame
-        # Pack can be simpler when dealing with a single widget filling its container
-        capture_preview_frame.grid(row=0, column=1, sticky="nsew", rowspan=2) # Still use grid to place frame in capture_frame
+        capture_preview_frame.grid(row=0, column=1, sticky="nsew", rowspan=2) # Still use grid to place frame in capture_frame, sticky allows it to use allocated space
 
-        # Removed grid and sticky from camera_preview_label
+        # Use pack for the preview label inside the fixed-size frame
         self.camera_preview_label = ttk.Label(capture_preview_frame, style='TLabel', anchor='center', text="Camera Preview", compound='image')
-        # Use pack to place the label inside the fixed-size frame
-        self.camera_preview_label.pack(expand=True, fill="both")
-
-        # Removed weights for capture_preview_frame and its label to prevent them from growing
-        # capture_preview_frame.grid_columnconfigure(0, weight=1) # Removed
-        # capture_preview_frame.grid_rowconfigure(0, weight=1) # Removed
+        self.camera_preview_label.pack(expand=True, fill="both") # Label expands to fill the fixed frame
 
 
         # Bottommost status bar - This stays outside the Notebook
@@ -1491,10 +1482,19 @@ class MinimalistCalibratorGUI:
                 raise IOError(f"Cannot open camera {camera_index}")
 
             # Optionally set camera resolution (may not work on all cameras/platforms)
-            # This might help in getting a consistent initial size, but window resizing
-            # needs to be handled by layout.
-            # self.camera_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            # self.camera_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            # Attempt to set the camera resolution to match the desired preview size
+            # This is not guaranteed to work, but can improve performance if supported.
+            # Check if setting resolution is successful
+            set_width_success = self.camera_cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.preview_width)
+            set_height_success = self.camera_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.preview_height)
+
+            if not set_width_success or not set_height_success:
+                print(f"Warning: Could not set camera resolution to {self.preview_width}x{self.preview_height}. Camera will use default resolution.")
+                # You might want to get the actual camera resolution here if setting failed
+                # actual_width = self.camera_cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                # actual_height = self.camera_cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                # The cv2_to_tk function will handle scaling whatever resolution is received.
+
 
         except Exception as e:
             error_msg = f"Error accessing camera {camera_index}: {e}"
@@ -1510,12 +1510,17 @@ class MinimalistCalibratorGUI:
         self.total_capture_count = total_photos
         self.capture_interval_ms = int(interval_sec * 1000) # Convert seconds to milliseconds
 
+        # Explicitly set the size of the preview label
+        self.camera_preview_label.config(width=self.preview_width, height=self.preview_height)
+        self.camera_preview_label.update_idletasks()  # Ensure size is applied before first frame
+
+
         # Update GUI state
         self.start_capture_button.config(state=tk.DISABLED)
         self.stop_capture_button.config(state=tk.NORMAL)
-        self.capture_status_label.config(text=f"Capturing 0/{self.total_capture_count}...")
-        self.status_bar.config(text="Camera capture and preview started.")
-        self.camera_preview_label.config(text="Previewing...") # Update preview label
+        self.capture_status_label.config(text=f"正在捕获 0/{self.total_capture_count}...") # Using Chinese characters as in the original
+        self.status_bar.config(text="相机捕获和预览已启动。") # Using Chinese characters
+        self.camera_preview_label.config(text="预览中...") # Using Chinese characters
 
         # Start the continuous preview update loop
         self.update_preview()
@@ -1525,42 +1530,35 @@ class MinimalistCalibratorGUI:
 
 
     def update_preview(self):
-        """Read a frame from camera and update the preview label."""
+        """从相机读取一帧并更新预览标签。""" # Using Chinese characters
         if self.is_capturing_preview and self.camera_cap is not None:
             ret, frame = self.camera_cap.read()
             if ret:
-                self.last_frame = frame # Store the last read frame
+                self.last_frame = frame  # 存储最后读取的帧 # Using Chinese characters
 
-                # Convert frame for Tkinter display
-                # Get the current size of the preview label's container frame (which has a fixed size)
-                preview_width = self.camera_preview_label.master.winfo_width()
-                preview_height = self.camera_preview_label.master.winfo_height()
-
-                tk_img, error_msg = cv2_to_tk(frame, preview_width, preview_height)
+                # Use the fixed preview size for conversion
+                tk_img, error_msg = cv2_to_tk(frame, self.preview_width, self.preview_height)
 
                 if tk_img:
                     self.camera_preview_label.config(image=tk_img, text="") # Update label with new frame
                     self.camera_preview_label.image = tk_img # Keep reference
                 else:
-                    # Handle preview display error
-                    self.camera_preview_label.config(image='', text=f"Preview Error:\n{error_msg}")
+                    self.camera_preview_label.config(image='', text=f"预览错误：\n{error_msg}") # Using Chinese characters
                     self.camera_preview_label.image = None
-                    # Don't stop capture just because preview display fails, but log it
-                    print(f"Preview display error: {error_msg}")
+                    print(f"预览显示错误：{error_msg}") # Using Chinese characters
 
 
             else:
-                # Handle frame read error from camera
-                error_msg = "Error reading frame from camera."
-                self.status_bar.config(text="Capture error: " + error_msg)
-                self.capture_status_label.config(text="Preview Failed!")
-                self.camera_preview_label.config(image='', text="Camera Error")
+                error_msg = "从相机读取帧出错。" # Using Chinese characters
+                self.status_bar.config(text="捕获错误：" + error_msg) # Using Chinese characters
+                self.capture_status_label.config(text="预览失败！") # Using Chinese characters
+                self.camera_preview_label.config(image='', text="相机错误") # Using Chinese characters
                 self.camera_preview_label.image = None
-                messagebox.showerror("Camera Error", error_msg + "\nStopping capture.")
+                messagebox.showerror("相机错误", error_msg + "\n正在停止捕获。") # Using Chinese characters
                 self.stop_capture() # Stop capture on frame read error
 
 
-            # Schedule the next preview update
+            # 调度下一次预览更新 # Using Chinese characters
             if self.is_capturing_preview:
                 # Run update_preview again after a short delay (e.g., 30ms for ~30fps)
                 self.preview_after_id = self.master.after(30, self.update_preview)
