@@ -13,21 +13,7 @@ import time # For timestamp in filenames
 # Also resizes the image to fit within the display area while maintaining aspect ratio
 # Returns (tk_photo, error_message)
 
-def start_initial_countdown(self, countdown_seconds):
-        """Display an initial countdown before starting capture."""
-        if countdown_seconds > 0:
-            self.camera_preview_label.config(
-                text=str(countdown_seconds),
-                font=("Helvetica", 60),  # Larger font
-                compound="center"
-            )
-            self.camera_preview_label.configure(style="CountdownLabel.TLabel")  # Apply style
-            self.master.after(1000, self.start_initial_countdown, countdown_seconds - 1)
-        else:
-            self.camera_preview_label.config(text="Previewing...", font=None, compound="image")
-            self.camera_preview_label.configure(style="TLabel")  # Reset style
-            # Start the timed capture saving process
-            self.schedule_capture_save()
+
 
 def cv2_to_tk(cv2_img, display_width, display_height):
     """
@@ -467,7 +453,21 @@ class MinimalistCalibratorGUI:
 
 
     # --- Core method implementation ---
-
+    def start_initial_countdown(self, countdown_seconds):
+        """Display an initial countdown before starting capture."""
+        if countdown_seconds > 0:
+            self.camera_preview_label.config(
+                text=str(countdown_seconds),
+                font=("Helvetica", 60),  # Larger font
+                compound="center"
+            )
+            self.camera_preview_label.configure(style="CountdownLabel.TLabel")  # Apply style
+            self.master.after(1000, self.start_initial_countdown, countdown_seconds - 1)
+        else:
+            self.camera_preview_label.config(text="Previewing...", font=None, compound="image")
+            self.camera_preview_label.configure(style="TLabel")  # Reset style
+            # Start the timed capture saving process
+            self.schedule_capture_save()
     def select_folder(self):
         """Open folder selection dialog, load image list"""
         folder_selected = filedialog.askdirectory()
