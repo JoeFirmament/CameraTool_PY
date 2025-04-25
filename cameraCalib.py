@@ -12,6 +12,23 @@ import time # For timestamp in filenames
 # Helper function to convert OpenCV image (NumPy array) to Tkinter PhotoImage
 # Also resizes the image to fit within the display area while maintaining aspect ratio
 # Returns (tk_photo, error_message)
+
+def start_initial_countdown(self, countdown_seconds):
+        """Display an initial countdown before starting capture."""
+        if countdown_seconds > 0:
+            self.camera_preview_label.config(
+                text=str(countdown_seconds),
+                font=("Helvetica", 60),  # Larger font
+                compound="center"
+            )
+            self.camera_preview_label.configure(style="CountdownLabel.TLabel")  # Apply style
+            self.master.after(1000, self.start_initial_countdown, countdown_seconds - 1)
+        else:
+            self.camera_preview_label.config(text="Previewing...", font=None, compound="image")
+            self.camera_preview_label.configure(style="TLabel")  # Reset style
+            # Start the timed capture saving process
+            self.schedule_capture_save()
+
 def cv2_to_tk(cv2_img, display_width, display_height):
     """
     Converts an OpenCV image (BGR numpy array) to a Tkinter PhotoImage,
@@ -105,6 +122,7 @@ class MinimalistCalibratorGUI:
         else:
             print(f"Warning: Application icon file '{icon_path}' not found in the current directory.")
 
+                # Configure ttk style for countdown label
 
         # --- Configure ttk styles for a white minimalist theme ---
         style = ttk.Style()
@@ -131,7 +149,13 @@ class MinimalistCalibratorGUI:
         style.configure('TNotebook', background='white', borderwidth=0)
         style.configure('TNotebook.Tab', background='lightgray', foreground='black', padding=[5, 2]) # Padding [width, height]
         style.map('TNotebook.Tab', background=[('selected', 'white')]) # Selected tab background is white
-
+        style.configure(
+            "CountdownLabel.TLabel",
+            background="white",
+            foreground="black",
+            font=("Helvetica", 60),
+            opacity=0.5,  # 设置透明度
+        )
 
         # tk.Text widgets are not ttk, directly set bg parameter
 
@@ -449,7 +473,8 @@ class MinimalistCalibratorGUI:
         folder_selected = filedialog.askdirectory()
         if folder_selected:
             self.folder_path_label.config(text=folder_selected)
-            self.status_bar.config(text=f"Looking for images...")
+            # Debug message added here
+            self.status_bar.config(text=f"Searching for images in selected folder...") # Added debug message
             self.master.update() # Force GUI update
 
             # Support common image formats and sort by filename
@@ -462,11 +487,13 @@ class MinimalistCalibratorGUI:
             self.image_paths.sort()
 
             if not self.image_paths:
-                self.status_bar.config(text="No supported image files found (.jpg, .png, etc.)")
+                # Debug message modified here
+                self.status_bar.config(text="No supported image files found (.jpg, .png, etc.)") # Modified debug message
                 self.reset_gui_state()
                 return
 
-            self.status_bar.config(text=f"Found {len(self.image_paths)} images.")
+            # Debug message modified here
+            self.status_bar.config(text=f"Found {len(self.image_paths)} images.") # Modified debug message
             self.reset_gui_state() # Reset all states and display, but keep image_paths
             self.update_image_list() # Update list display
 
@@ -483,7 +510,7 @@ class MinimalistCalibratorGUI:
             tags = () # Used for setting row color or other styles
 
             if i in self.excluded_indices:
-                 status = "Excluded"
+                 status = "Excluded" # Consistent English status
                  tags = ('excluded',) # Apply excluded style tag
 
             # Check if the image was successfully used for calibration (implies corners were found)
@@ -494,18 +521,22 @@ class MinimalistCalibratorGUI:
                      error_index = self.successful_image_indices.index(i)
                      error_text = f"{self.per_view_errors[error_index]:.4f}"
                      if not status: # If not already marked as excluded
-                         status = "Success" # Mark as successful
+                         status = "Success" # Consistent English status
                  except ValueError:
                      # This should ideally not happen if data is consistent
-                     status = "Error Finding" # Error looking up error
+                     status = "Error Finding" # Consistent English status (Shouldn't happen if logic is correct)
 
 
             # If not excluded, and the corner finding process has run (successful_image_indices is not empty),
             # and this image was not in the successful list, mark as find failed.
-            elif not i in self.excluded_indices and self.successful_image_indices:
+            # Check if objpoints_all is not empty as a sign that find corners process has at least started/ran
+            elif not i in self.excluded_indices and (self.successful_image_indices or (self.objpoints_all and i not in self.successful_image_indices)):
                  if not status: # If not already marked as excluded or successful
-                     status = "Find Failed"
+                     status = "Find Failed" # Consistent English status
                      tags = ('failed',) # Apply find failed style tag
+            elif not i in self.excluded_indices and not self.objpoints_all:
+                 # If not excluded and corner finding hasn't even run yet
+                 status = "" # Or could set to "Pending" or similar if desired, but empty is minimalist
 
 
             # Insert item into Treeview
@@ -565,7 +596,8 @@ class MinimalistCalibratorGUI:
 
             img = cv2.imread(image_path)
             if img is None:
-                self.status_bar.config(text=f"Error: Could not load image file: {filename}")
+                # Debug message modified here
+                self.status_bar.config(text=f"Error: Could not load image file: {filename}") # Modified debug message
                 self.image_label.config(image='', text=f"Load Failed:\n{filename}") # Clear image display, show text
                 self.image_label.image = None # Remove reference
                 self.current_image_info_label.config(text=f"Load Failed: {filename}")
@@ -714,6 +746,7 @@ class MinimalistCalibratorGUI:
         """Execute the camera calibration process"""
         if not self.image_paths:
             messagebox.showwarning("Warning", "Please select a folder containing calibration images first.")
+            self.status_bar.config(text="Calibration failed: No images loaded.") # Added debug message
             return
 
         # Get and validate parameters
@@ -722,7 +755,9 @@ class MinimalistCalibratorGUI:
             self.board_params['size'] = (board_w, board_h); self.board_params['square_size'] = square_size
             if board_w <= 0 or board_h <= 0 or square_size <= 0: raise ValueError("Parameters must be positive")
         except ValueError:
-            messagebox.showerror("Error", "Please check if the entered calibration board parameters are valid positive numbers."); return
+            messagebox.showerror("Error", "Please check if the entered calibration board parameters are valid positive numbers.");
+            self.status_bar.config(text="Calibration failed: Invalid parameters.") # Added debug message
+            return
 
         # Clear previous points and results, keep image_paths and excluded_indices
         self.reset_calibration_results(); self.reset_results_display()
@@ -738,7 +773,8 @@ class MinimalistCalibratorGUI:
              self.image_list_tree.item(item_id, values=new_values, tags=new_tags)
 
 
-        self.status_bar.config(text="Searching for chessboard corners...")
+        # Debug message added here
+        self.status_bar.config(text="Starting corner detection process...") # Added debug message
         self.master.update_idletasks() # Force GUI update to show status
 
 
@@ -766,17 +802,19 @@ class MinimalistCalibratorGUI:
 
             processed_count += 1
             filename = os.path.basename(path)
-            self.status_bar.config(text=f"Finding corners {processed_count}/{total_images_to_process}: {filename}...")
+            # Debug message updated here
+            self.status_bar.config(text=f"Finding corners {processed_count}/{total_images_to_process}: {filename}...") # Debug message updated
             self.master.update_idletasks()
 
             img = cv2.imread(path)
             if img is None:
-                self.status_bar.config(text=f"Warning: Could not load image {filename}")
+                # Debug message updated here
+                self.status_bar.config(text=f"Warning: Could not load image {filename}. Skipping.") # Debug message updated
                 # Update list status for this image
                 item_id = str(i); current_values = self.image_list_tree.item(item_id, 'values')
                 current_tags = self.image_list_tree.item(item_id, 'tags')
                 new_tags = ('excluded',) if 'excluded' in current_tags else ('failed',) # Keep excluded tag if present, else add failed tag
-                self.image_list_tree.item(item_id, values=(current_values[0], 'Load Failed'), tags=new_tags); continue
+                self.image_list_tree.item(item_id, values=(current_values[0], 'Load Failed'), tags=new_tags); continue # Status set to 'Load Failed'
 
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             if image_size is None:
@@ -788,6 +826,8 @@ class MinimalistCalibratorGUI:
 
             if ret == True:
                 # If corners are found
+                # Debug message added here
+                self.status_bar.config(text=f"Corners found in {filename}.") # Added debug message
                 temp_objpoints.append(objp) # Add corresponding world points
 
                 # Refine corner locations for sub-pixel accuracy
@@ -807,12 +847,14 @@ class MinimalistCalibratorGUI:
 
             else:
                  # If corners are not found
+                 # Debug message added here
+                 self.status_bar.config(text=f"Warning: No corners found in {filename}. Skipping.") # Added debug message
                  item_id = str(i); current_values = self.image_list_tree.item(item_id, 'values')
                  # Keep excluded tag if present, else add failed tag
                  current_tags = self.image_list_tree.item(item_id, 'tags')
                  new_tags = ('excluded',) if 'excluded' in current_tags else ('failed',)
 
-                 self.image_list_tree.item(item_id, values=(current_values[0], 'Find Failed'), tags=new_tags)
+                 self.image_list_tree.item(item_id, values=(current_values[0], 'Find Failed'), tags=new_tags) # Status set to 'Find Failed'
 
 
         # Update the instance's points and indices with the results of this find phase
@@ -824,13 +866,15 @@ class MinimalistCalibratorGUI:
         # --- Perform Calibration Phase ---
         min_images_required = 10 # Empirical value, typically need at least 10-15 successful images
         if len(self.objpoints_all) < min_images_required:
-            msg = f"Insufficient images with corners found ({len(self.objpoints_all)} images). Typically at least {min_images_required} images are needed for reliable calibration results."
+            # Debug message modified here
+            msg = f"Calibration failed: Insufficient images with corners found ({len(self.objpoints_all)} images). At least {min_images_required} images are needed." # Modified debug message
             self.status_bar.config(text=msg); messagebox.showwarning("Warning", msg)
             # Even if calibration fails due to insufficient images, update the list to show which ones failed corner finding
             self.update_image_list() # Ensure final list status is accurate (including find failed markers)
             return
 
-        self.status_bar.config(text=f"Corners found in {len(self.objpoints_all)} images, performing camera calibration...")
+        # Debug message modified here
+        self.status_bar.config(text=f"Corners found in {len(self.objpoints_all)} images. Performing camera calibration...") # Modified debug message
         self.master.update_idletasks()
 
         try:
@@ -864,14 +908,16 @@ class MinimalistCalibratorGUI:
             self.display_results(self.camera_matrix, self.dist_coeffs, avg_error)
             self.update_image_list() # Update list to show error for each successful image and final status
 
-            self.status_bar.config(text="Camera calibration complete! Average reprojection error: %.4f" % avg_error)
+            # Debug message modified here
+            self.status_bar.config(text="Camera calibration complete! Average reprojection error: %.4f" % avg_error) # Modified debug message
             self.save_button.config(state=tk.NORMAL) # Enable save button
             self.validate_button.config(state=tk.NORMAL) # Enable validate button
             self.run_undistort_button.config(state=tk.NORMAL) # Enable undistort button
 
 
         except Exception as e:
-            self.status_bar.config(text=f"An error occurred during calibration: {e}")
+            # Debug message modified here
+            self.status_bar.config(text=f"An error occurred during calibration: {e}") # Modified debug message
             messagebox.showerror("Calibration Error", f"An error occurred during camera calibration: {e}")
             self.reset_calibration_results() # Clear potentially partial results
             self.reset_results_display()
@@ -1521,23 +1567,25 @@ class MinimalistCalibratorGUI:
         # Update GUI state
         self.start_capture_button.config(state=tk.DISABLED)
         self.stop_capture_button.config(state=tk.NORMAL)
-        self.capture_status_label.config(text=f"正在捕获 0/{self.total_capture_count}...") # Using Chinese characters as in the original
-        self.status_bar.config(text="相机捕获和预览已启动。") # Using Chinese characters
-        self.camera_preview_label.config(text="预览中...") # Using Chinese characters
+        self.capture_status_label.config(text=f"Capturing 0/{self.total_capture_count}...") # Updated to English
+        self.status_bar.config(text="Camera capture and preview started.") # Updated to English
+        self.camera_preview_label.config(text="Previewing...") # Updated to English
 
         # Start the continuous preview update loop
         self.update_preview()
-
+    # Start the initial countdown before capture
+        countdown_seconds = int(min(5, interval_sec))  # 计算倒计时秒数
+        self.start_initial_countdown(countdown_seconds)  # 使用计算得到的倒计时
         # Start the timed capture saving process
         self.schedule_capture_save()
 
 
     def update_preview(self):
-        """从相机读取一帧并更新预览标签。""" # Using Chinese characters
+        """Read a frame from the camera and update the preview label.""" # Updated to English
         if self.is_capturing_preview and self.camera_cap is not None:
             ret, frame = self.camera_cap.read()
             if ret:
-                self.last_frame = frame  # 存储最后读取的帧 # Using Chinese characters
+                self.last_frame = frame  # Store the last frame read from camera # Updated to English
 
                 # Use the fixed preview size for conversion
                 tk_img, error_msg = cv2_to_tk(frame, self.preview_width, self.preview_height)
@@ -1546,22 +1594,22 @@ class MinimalistCalibratorGUI:
                     self.camera_preview_label.config(image=tk_img, text="") # Update label with new frame
                     self.camera_preview_label.image = tk_img # Keep reference
                 else:
-                    self.camera_preview_label.config(image='', text=f"预览错误：\n{error_msg}") # Using Chinese characters
+                    self.camera_preview_label.config(image='', text=f"Preview Error:\n{error_msg}") # Updated to English
                     self.camera_preview_label.image = None
-                    print(f"预览显示错误：{error_msg}") # Using Chinese characters
+                    print(f"Preview display error: {error_msg}") # Updated to English
 
 
             else:
-                error_msg = "从相机读取帧出错。" # Using Chinese characters
-                self.status_bar.config(text="捕获错误：" + error_msg) # Using Chinese characters
-                self.capture_status_label.config(text="预览失败！") # Using Chinese characters
-                self.camera_preview_label.config(image='', text="相机错误") # Using Chinese characters
+                error_msg = "Error reading frame from camera." # Updated to English
+                self.status_bar.config(text="Capture error: " + error_msg) # Updated to English
+                self.capture_status_label.config(text="Preview Failed!") # Updated to English
+                self.camera_preview_label.config(image='', text="Camera Error") # Updated to English
                 self.camera_preview_label.image = None
-                messagebox.showerror("相机错误", error_msg + "\n正在停止捕获。") # Using Chinese characters
+                messagebox.showerror("Camera Error", error_msg + "\nStopping capture.") # Updated to English
                 self.stop_capture() # Stop capture on frame read error
 
 
-            # 调度下一次预览更新 # Using Chinese characters
+            # Schedule the next preview update # Updated to English
             if self.is_capturing_preview:
                 # Run update_preview again after a short delay (e.g., 30ms for ~30fps)
                 self.preview_after_id = self.master.after(30, self.update_preview)
