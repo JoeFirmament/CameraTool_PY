@@ -453,21 +453,31 @@ class MinimalistCalibratorGUI:
 
 
     # --- Core method implementation ---
-    def start_initial_countdown(self, countdown_seconds):
+    # def start_initial_countdown(self, countdown_seconds): # <--- 注释或删除旧名称
+    def run_capture_countdown(self, countdown_seconds):
         """Display an initial countdown before starting capture."""
         if countdown_seconds > 0:
             self.camera_preview_label.config(
                 text=str(countdown_seconds),
-                font=("Helvetica", 60),  # Larger font
+                font=("Helvetica", 90),  # Larger font
                 compound="center"
             )
             self.camera_preview_label.configure(style="CountdownLabel.TLabel")  # Apply style
             self.master.after(1000, self.start_initial_countdown, countdown_seconds - 1)
         else:
-            self.camera_preview_label.config(text="Previewing...", font=None, compound="image")
+            #倒计时结束
+            self.camera_preview_label.config(text="Saving...", font=None, compound="image")
             self.camera_preview_label.configure(style="TLabel")  # Reset style
+            self.master.update_idletasks() # 更新界面显示 "Saving..."
             # Start the timed capture saving process
             self.schedule_capture_save()
+            if self.is_capturing and self.capture_count < self.total_capture_count:
+                 self.schedule_capture_save() # 安排下一次 (会再次调用 run_capture_countdown)
+            elif self.is_capturing: # 如果是最后一张照片保存后
+                 self.stop_capture() # 停止整个过程
+                 self.capture_status_label.config(text=f"Capture Complete: {self.capture_count} photos saved.")
+                 self.status_bar.config(text="Camera capture finished.")
+                 messagebox.showinfo("Capture Complete", f"Successfully captured {self.capture_count} photos.")            
     def select_folder(self):
         """Open folder selection dialog, load image list"""
         folder_selected = filedialog.askdirectory()
@@ -1574,10 +1584,9 @@ class MinimalistCalibratorGUI:
         # Start the continuous preview update loop
         self.update_preview()
     # Start the initial countdown before capture
-        countdown_seconds = int(min(5, interval_sec))  # 计算倒计时秒数
-        self.start_initial_countdown(countdown_seconds)  # 使用计算得到的倒计时
-        # Start the timed capture saving process
-        self.schedule_capture_save()
+        countdown_seconds = int(min(3, interval_sec))  # 计算倒计时秒数
+        self.run_capture_countdown(countdown_seconds)  # 使用计算得到的倒计时
+
 
 
     def update_preview(self):
@@ -1619,13 +1628,18 @@ class MinimalistCalibratorGUI:
         """Schedule the next photo capture save."""
         if self.is_capturing and self.capture_count < self.total_capture_count:
             # Schedule the _capture_photo_save method to run after the interval
-            self.capture_after_id = self.master.after(self.capture_interval_ms, self._capture_photo_save)
-        elif self.is_capturing and self.capture_count >= self.total_capture_count:
+            countdown_seconds = 3 #倒计时3 秒
+        # 使用 self.capture_interval_ms 作为延迟时间
+        self.capture_after_id = self.master.after(self.capture_interval_ms,
+                                                 self.run_capture_countdown,
+                                                 countdown_seconds) # <--- 调度倒计时方法            
+        #    self.capture_after_id = self.master.after(self.capture_interval_ms, self._capture_photo_save)
+        #elif self.is_capturing and self.capture_count >= self.total_capture_count:
             # Capture finished
-            self.stop_capture()
-            self.capture_status_label.config(text=f"Capture Complete: {self.capture_count} photos saved.")
-            self.status_bar.config(text="Camera capture finished.")
-            messagebox.showinfo("Capture Complete", f"Successfully captured {self.capture_count} photos.")
+        #    self.stop_capture()
+         #   self.capture_status_label.config(text=f"Capture Complete: {self.capture_count} photos saved.")
+         #   self.status_bar.config(text="Camera capture finished.")
+         #   messagebox.showinfo("Capture Complete", f"Successfully captured {self.capture_count} photos.")
 
 
     def _capture_photo_save(self):
@@ -1653,21 +1667,21 @@ class MinimalistCalibratorGUI:
                 # Decide whether to stop on error or continue. Let's continue for now but log error.
 
             # Schedule the next save if not done
-            if self.is_capturing and self.capture_count < self.total_capture_count:
-                 self.schedule_capture_save() # Schedule next photo
-            elif self.is_capturing and self.capture_count >= self.total_capture_count:
+            #if self.is_capturing and self.capture_count < self.total_capture_count:
+            #     self.schedule_capture_save() # Schedule next photo
+            #elif self.is_capturing and self.capture_count >= self.total_capture_count:
                  # Capture finished after saving the last photo
-                 self.schedule_capture_save() # Call schedule_capture_save one last time to trigger stop_capture
+            #     self.schedule_capture_save() # Call schedule_capture_save one last time to trigger stop_capture
 
 
         else:
              # This means update_preview hasn't successfully read a frame yet
              error_msg = "No frame available to save."
              self.status_bar.config(text="Capture warning: " + error_msg)
-             self.capture_status_label.config(text=f"Waiting for frame ({self.capture_count}/{self.total_capture_count})...")
+             #self.capture_status_label.config(text=f"Waiting for frame ({self.capture_count}/{self.total_capture_count})...")
              # Reschedule saving after a short delay, hoping a frame becomes available
-             if self.is_capturing and self.capture_count < self.total_capture_count:
-                  self.capture_after_id = self.master.after(100, self._capture_photo_save) # Try again in 100ms
+             #if self.is_capturing and self.capture_count < self.total_capture_count:
+              #    self.capture_after_id = self.master.after(100, self._capture_photo_save) # Try again in 100ms
 
 
     def stop_capture(self):
