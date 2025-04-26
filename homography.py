@@ -127,95 +127,97 @@ class HomographyCalibratorApp:
         self.controls_frame.rowconfigure(11, weight=1)
         self.controls_frame.rowconfigure(22, weight=1)
 
-def list_camera_resolutions(self):
-    """Lists all supported resolutions for the specified camera device using v4l2-ctl."""
-    device = self.device_entry.get()
-    if not device:
-        messagebox.showerror("Error", "Please enter a camera device (e.g., /dev/video0).")
-        return
 
-    try:
-        # Check if v4l2-ctl is available
-        subprocess.run(["v4l2-ctl", "--version"], check=True, capture_output=True, text=True)
-    except FileNotFoundError:
-        messagebox.showerror("Error", "v4l2-ctl not found. Please install v4l-utils (e.g., 'sudo apt install v4l-utils' on Ubuntu).")
-        print("Error: v4l2-ctl not found.")
-        return
-    except subprocess.CalledProcessError:
-        messagebox.showerror("Error", "Failed to run v4l2-ctl. Ensure v4l-utils is installed correctly.")
-        print("Error: Failed to run v4l2-ctl.")
-        return
 
-    try:
-        # Run v4l2-ctl to list formats and resolutions
-        result = subprocess.run(
-            ["v4l2-ctl", "--device", device, "--list-formats-ext"],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        output = result.stdout
-        print(f"Debug: v4l2-ctl output:\n{output}")  # 完整输出
-
-        supported_resolutions = []
-        lines = output.splitlines()
-        current_format = None
-        for line_num, line in enumerate(lines):
-            line = line.strip()
-            print(f"Debug: Processing line {line_num + 1}: {line}")  # 逐行输出
-
-            # 匹配像素格式行（更精确的匹配）
-            format_match = re.search(r"Pixel Format: '(.+?)' \(.*", line)
-            if format_match:
-                current_format = format_match.group(1)
-                print(f"  Debug: Found format: {current_format}")
-                continue  # 处理完格式后跳到下一行
-
-            # 匹配分辨率行（更精确的匹配）
-            size_match = re.search(r"Size: Discrete (\d+x\d+)", line)
-            if size_match and current_format:
-                res = size_match.group(1)
-                if 'x' in res:
-                    if res not in supported_resolutions:
-                        supported_resolutions.append(res)
-                        print(f"  Debug:   Added resolution: {res}")
-                continue  # 处理完分辨率后跳到下一行
-
-            print(f"  Debug:   Skipping line: {line}")  # 所有未匹配的行
-
-        if not supported_resolutions:
-            messagebox.showerror(
-                "Error",
-                f"No supported resolutions found for device {device}. "
-                "The device may be invalid, not connected, or not properly configured."
-            )
-            print(f"Error: No resolutions found for device {device}.")
-            self.resolution_combobox['values'] = []
-            self.capture_button.config(state=tk.DISABLED)
+    def list_camera_resolutions(self):
+        """Lists all supported resolutions for the specified camera device using v4l2-ctl."""
+        device = self.device_entry.get()
+        if not device:
+            messagebox.showerror("Error", "Please enter a camera device (e.g., /dev/video0).")
             return
 
-        # Sort resolutions by width for a better user experience
-        supported_resolutions.sort(key=lambda x: int(x.split('x')[0]))
-        self.resolution_combobox['values'] = supported_resolutions
-        self.resolution_combobox.set(supported_resolutions[0])
-        self.capture_button.config(state=tk.NORMAL)
-        messagebox.showinfo("Resolutions", f"Supported resolutions:\n{', '.join(supported_resolutions)}")
-        print(f"Supported resolutions for {device}: {supported_resolutions}")
+        try:
+            # Check if v4l2-ctl is available
+            subprocess.run(["v4l2-ctl", "--version"], check=True, capture_output=True, text=True)
+        except FileNotFoundError:
+            messagebox.showerror("Error", "v4l2-ctl not found. Please install v4l-utils (e.g., 'sudo apt install v4l-utils' on Ubuntu).")
+            print("Error: v4l2-ctl not found.")
+            return
+        except subprocess.CalledProcessError:
+            messagebox.showerror("Error", "Failed to run v4l2-ctl. Ensure v4l-utils is installed correctly.")
+            print("Error: Failed to run v4l2-ctl.")
+            return
 
-    except subprocess.CalledProcessError as e:
-        messagebox.showerror(
-            "Error",
-            f"Failed to access device {device}. "
-            "The device may be invalid, not connected, or not properly configured."
-        )
-        print(f"Error accessing device {device}: {e}")
-        self.resolution_combobox['values'] = []
-        self.capture_button.config(state=tk.DISABLED)
-    except Exception as e:
-        messagebox.showerror("Error", f"Error listing resolutions: {e}")
-        print(f"Error listing resolutions for {device}: {e}")
-        self.resolution_combobox['values'] = []
-        self.capture_button.config(state=tk.DISABLED)
+        try:
+            # Run v4l2-ctl to list formats and resolutions
+            result = subprocess.run(
+                ["v4l2-ctl", "--device", device, "--list-formats-ext"],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            output = result.stdout
+            print(f"Debug: v4l2-ctl output:\n{output}")  # 完整输出
+
+            supported_resolutions = []
+            lines = output.splitlines()
+            current_format = None
+            for line_num, line in enumerate(lines):
+                line = line.strip()
+                print(f"Debug: Processing line {line_num + 1}: {line}")  # 逐行输出
+
+                # 匹配像素格式行（更精确的匹配）
+                format_match = re.search(r"Pixel Format: '(.+?)' \(.*", line)
+                if format_match:
+                    current_format = format_match.group(1)
+                    print(f"  Debug: Found format: {current_format}")
+                    continue  # 处理完格式后跳到下一行
+
+                # 匹配分辨率行（更精确的匹配）
+                size_match = re.search(r"Size: Discrete (\d+x\d+)", line)
+                if size_match and current_format:
+                    res = size_match.group(1)
+                    if 'x' in res:
+                        if res not in supported_resolutions:
+                            supported_resolutions.append(res)
+                            print(f"  Debug:   Added resolution: {res}")
+                    continue  # 处理完分辨率后跳到下一行
+
+                print(f"  Debug:   Skipping line: {line}")  # 所有未匹配的行
+
+            if not supported_resolutions:
+                messagebox.showerror(
+                    "Error",
+                    f"No supported resolutions found for device {device}. "
+                    "The device may be invalid, not connected, or not properly configured."
+                )
+                print(f"Error: No resolutions found for device {device}.")
+                self.resolution_combobox['values'] = []
+                self.capture_button.config(state=tk.DISABLED)
+                return
+
+            # Sort resolutions by width for a better user experience
+            supported_resolutions.sort(key=lambda x: int(x.split('x')[0]))
+            self.resolution_combobox['values'] = supported_resolutions
+            self.resolution_combobox.set(supported_resolutions[0])
+            self.capture_button.config(state=tk.NORMAL)
+            messagebox.showinfo("Resolutions", f"Supported resolutions:\n{', '.join(supported_resolutions)}")
+            print(f"Supported resolutions for {device}: {supported_resolutions}")
+
+        except subprocess.CalledProcessError as e:
+            messagebox.showerror(
+                "Error",
+                f"Failed to access device {device}. "
+                "The device may be invalid, not connected, or not properly configured."
+            )
+            print(f"Error accessing device {device}: {e}")
+            self.resolution_combobox['values'] = []
+            self.capture_button.config(state=tk.DISABLED)
+        except Exception as e:
+            messagebox.showerror("Error", f"Error listing resolutions: {e}")
+            print(f"Error listing resolutions for {device}: {e}")
+            self.resolution_combobox['values'] = []
+            self.capture_button.config(state=tk.DISABLED)   
 
 
 
