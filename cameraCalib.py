@@ -7,6 +7,7 @@ from PIL import Image, ImageTk # Requires Pillow: pip install Pillow
 import os # For handling file paths
 import sys # For handling path separators
 import time # For timestamp in filenames
+from datetime import datetime
 # import threading # Tkinter's after is simpler for GUI updates
 
 # Helper function to convert OpenCV image (NumPy array) to Tkinter PhotoImage
@@ -1733,7 +1734,8 @@ class MinimalistCalibratorGUI:
                  self.capture_status_label.config(text=f"Capture Stopped at {self.capture_count} photos.")
 
             # Reset preview label
-            self.camera_preview_label.config(image='', text="Camera Preview",font=None)
+            self.camera_preview_label.config(image='', text="Camera Preview",font=None,compound='image')
+            self.camera_preview_label.configure(style="TLabel") # <--- 明确重置为默认样式
             self.camera_preview_label.image = None
 
             self.start_capture_button.config(state=tk.NORMAL)
@@ -1742,6 +1744,16 @@ class MinimalistCalibratorGUI:
              # This case might happen if camera initialization failed but stop was called
              self.status_bar.config(text="Capture stopping initiated. Camera was not active.")
              self.capture_status_label.config(text="Idle.")
+        # --- 同样重置字体和样式，以防万一 ---
+             self.camera_preview_label.config(
+                 image='',
+                 text="Camera Preview",
+                 font=None,             # <--- 明确设置字体为 None
+                 compound='image'       # <--- 确保 compound 模式正确
+             )
+             self.camera_preview_label.configure(style="TLabel") # <--- 明确重置为默认样式
+             self.camera_preview_label.image = None
+             # ----------------------------------
              self.start_capture_button.config(state=tk.NORMAL)
              self.stop_capture_button.config(state=tk.DISABLED)
 
