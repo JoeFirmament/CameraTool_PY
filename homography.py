@@ -9,13 +9,17 @@ import os
 from datetime import datetime, timezone, timedelta
 import subprocess
 import re
-import threading # Import threading for the camera feed loop
-import time # Import time for potential sleep in preview loop
+import threading
+import time
 
 class HomographyCalibratorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Homography Calibrator from Label Studio JSON")
+
+        # Set initial window size and position (WidthxHeight+X+Y)
+        # Opens at 1920x1080 at the top-left corner (0,0)
+        self.root.geometry("1920x1080+0+0")
 
         # --- Add Window Icon ---
         icon_path = "icon.png" # Make sure you have an icon.png file in the same directory
@@ -36,8 +40,8 @@ class HomographyCalibratorApp:
         self.image_calib_path = None
         self.image_calib_cv2 = None
         self.image_calib_tk = None
-        self.calib_display_width = 0
-        self.calib_display_height = 0
+        # self.calib_display_width = 0 # No longer needed as canvas size is dynamic
+        # self.calib_display_height = 0 # No longer needed as canvas size is dynamic
         self.points_calib_data = []
         self.active_point_index = -1
         self.homography_matrix = None
@@ -50,18 +54,24 @@ class HomographyCalibratorApp:
         self.is_previewing = False # Flag to indicate if preview is running
         self.preview_thread = None # Thread for the camera preview loop
         self.latest_frame = None # Store the latest frame from the camera
+        self.current_photo_tk = None # Store the captured photo ImageTK object
 
         # --- GUI Elements ---
         main_pane = ttk.Panedwindow(root, orient=tk.HORIZONTAL)
         main_pane.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Canvas for displaying images/preview
-        self.canvas = tk.Canvas(main_pane, bg="gray")
+        # Set an initial minimum size, but it will expand with the pane
+        self.canvas = tk.Canvas(main_pane, bg="gray", width=1280, height=720) # Initial size, adjust as needed
         self.canvas.bind("<Button-1>", self.on_canvas_click)
+        # Allow the left pane (containing the canvas) to expand
         main_pane.add(self.canvas, weight=1)
+
 
         # Controls Frame
         self.controls_frame = ttk.Frame(main_pane, padding="10")
+        # Set a minimum width for the controls frame if needed, it has weight=0
+        # self.controls_frame.config(width=300) # Example minimum width
         main_pane.add(self.controls_frame, weight=0)
         self.controls_frame.columnconfigure(0, weight=1)
         self.controls_frame.columnconfigure(1, weight=1)
@@ -171,11 +181,96 @@ class HomographyCalibratorApp:
         # Bind the close event to stop the preview if it's running
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+        # Bind the canvas configure event to redraw when canvas size changes
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
 
     def on_closing(self):
         """Handles the window closing event to stop the camera preview."""
         self.stop_preview()
         self.root.destroy()
+
+    def on_canvas_configure(self, event):
+        """Handles canvas resizing to redraw the current image/preview."""
+        print(f"Debug: Canvas configured to size: {event.width}x{event.height}")
+        # When the canvas is resized, redraw the current content
+        if self.is_previewing:
+             # If preview is running, the update_preview loop will handle redrawing.
+             # No explicit action needed here unless the preview loop is paused or optimized.
+             pass
+        elif self.image_calib_tk:
+            # If a calibration image is loaded, redraw it scaled to the new canvas size
+            self.display_image_on_canvas(self.image_calib_cv2) # Redraw the original cv2 image
+        elif self.current_photo_tk:
+             # If a captured photo is displayed, redraw it scaled
+             # Need to store the captured cv2 image as well to redraw correctly
+             # For simplicity now, if a photo was captured, just clear the canvas on resize
+             self.canvas.delete("all")
+             self.canvas.create_text(event.width/2, event.height/2, text="Resize detected. Recapture or Load image.", fill="black", font=('Arial', 12))
+
+
+    def display_image_on_canvas(self, cv2_image):
+        """Displays a cv2 image on the canvas, scaled to fit."""
+        if cv2_image is None:
+            self.canvas.delete("all")
+            self.image_calib_tk = None
+            self.current_photo_tk = None
+            return
+
+        # Get current canvas dimensions
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        if canvas_width <= 1 or canvas_height <= 1:
+             print("Warning: Canvas has invalid size for displaying image.")
+             return # Cannot display on invalid canvas size
+
+
+        # Get image dimensions
+        img_height, img_width = cv2_image.shape[:2]
+
+        if img_width <= 1 or img_height <= 1:
+             print("Warning: Image has invalid size for displaying.")
+             self.canvas.delete("all")
+             self.image_calib_tk = None
+             self.current_photo_tk = None
+             return # Cannot display invalid image
+
+
+        # Calculate scaling factor to fit within canvas while maintaining aspect ratio
+        scale_w = canvas_width / img_width
+        scale_h = canvas_height / img_height
+        scale = min(scale_w, scale_h)
+
+        # Calculate new dimensions
+        new_width = int(img_width * scale)
+        new_height = int(img_height * scale)
+
+        # Resize image using PIL
+        img_rgb = cv2.cvtColor(cv2_image, cv2.COLOR_BGR2RGB)
+        img_pil = Image.fromarray(img_rgb)
+        # Use LANCZOS for high-quality downsampling
+        img_pil_resized = img_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+        # Convert to PhotoImage
+        img_tk = ImageTk.PhotoImage(image=img_pil_resized)
+
+        # Update the canvas
+        self.canvas.delete("all") # Clear previous content
+        # Calculate position to center the image on the canvas
+        x_center = (canvas_width - new_width) // 2
+        y_center = (canvas_height - new_height) // 2
+        self.canvas.create_image(x_center, y_center, anchor=tk.NW, image=img_tk)
+
+        # Store the PhotoImage to prevent garbage collection
+        # If it's a calibration image, store in self.image_calib_tk
+        # If it's a captured photo, store in self.current_photo_tk
+        # Need a way to differentiate or manage which one is currently displayed
+        # For simplicity, let's assume this function is called for either calib or captured photo.
+        # A better approach might be to pass a flag or have separate display methods.
+        # For now, let's store it in self.image_calib_tk, as it's the primary display variable.
+        # When previewing, we'll handle the tk image in update_preview.
+        self.image_calib_tk = img_tk # Overwrite for current displayed static image
+
 
     def list_camera_resolutions(self):
         """Lists all supported resolutions for the specified camera device using v4l2-ctl."""
@@ -210,8 +305,6 @@ class HomographyCalibratorApp:
             supported_resolutions = set() # Use a set to store unique resolutions
 
             # Use regex to find all occurrences of "Size: Discrete XXXXxYYYY"
-            # The pattern looks for "Size: Discrete " followed by digits, an 'x', and more digits.
-            # It captures the digitsXdigits part.
             resolution_pattern = re.compile(r'Size: Discrete (\d+x\d+)')
 
             for line in output.splitlines():
@@ -237,7 +330,14 @@ class HomographyCalibratorApp:
 
             self.resolution_combobox['values'] = sorted_resolutions
             if sorted_resolutions:
-                self.resolution_combobox.set(sorted_resolutions[0]) # Set the default value
+                # Select a common high-definition resolution if available, otherwise the first one
+                if "1920x1080" in sorted_resolutions:
+                     self.resolution_combobox.set("1920x1080")
+                elif "1280x720" in sorted_resolutions:
+                     self.resolution_combobox.set("1280x720")
+                else:
+                     self.resolution_combobox.set(sorted_resolutions[0])
+
             self.capture_button.config(state=tk.NORMAL)
             messagebox.showinfo("Resolutions", f"Supported resolutions:\n{', '.join(sorted_resolutions)}")
             print(f"Supported resolutions for {device}: {sorted_resolutions}")
@@ -269,6 +369,12 @@ class HomographyCalibratorApp:
             print("Preview is already running.")
             return
 
+        # Stop any currently displayed static image
+        self.canvas.delete("all")
+        self.image_calib_tk = None
+        self.current_photo_tk = None
+
+
         try:
             width, height = map(int, resolution_str.split('x'))
             # Use CAP_V4L2 for Linux, potentially adjust for other OS if needed
@@ -287,9 +393,8 @@ class HomographyCalibratorApp:
             actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             if actual_width != width or actual_height != height:
-                 print(f"Warning: Requested resolution {resolution_str} not fully supported. "
-                       f"Using {actual_width}x{actual_height}. This might affect the displayed aspect ratio.")
-                 # You might want to update the resolution_str variable here if you plan to use it later
+                 print(f"Warning: Requested resolution {resolution_str} not fully supported by camera. "
+                       f"Using {actual_width}x{actual_height}. The preview will be scaled to fit the canvas.")
 
             self.is_previewing = True
             self.capture_button.config(text="Capture Frame")
@@ -297,12 +402,6 @@ class HomographyCalibratorApp:
             self.list_resolutions_button.config(state=tk.DISABLED)
             self.device_entry.config(state=tk.DISABLED)
             self.resolution_combobox.config(state=tk.DISABLED)
-
-            # Clear the canvas before displaying the camera feed
-            self.canvas.delete("all")
-            # Adjust canvas size. You might want to scale this to fit the window better
-            self.canvas.config(width=actual_width, height=actual_height)
-
 
             # Start the preview update loop in a separate thread
             self.preview_thread = threading.Thread(target=self.update_preview)
@@ -318,9 +417,9 @@ class HomographyCalibratorApp:
             self.stop_preview() # Ensure cleanup on error
 
     def update_preview(self):
-        """Reads frames from the camera and updates the canvas."""
+        """Reads frames from the camera and updates the canvas, scaling to fit."""
         try:
-            while self.is_previewing:
+            while self.is_previewing and self.cap and self.cap.isOpened():
                 ret, frame = self.cap.read()
                 if not ret:
                     print("Warning: Could not read frame from camera.")
@@ -331,68 +430,90 @@ class HomographyCalibratorApp:
                 # Store the latest frame for capture
                 self.latest_frame = frame
 
-                # Convert the OpenCV frame (BGR) to RGB for PIL
+                # Get current canvas dimensions to scale the frame
+                canvas_width = self.canvas.winfo_width()
+                canvas_height = self.canvas.winfo_height()
+
+                if canvas_width <= 1 or canvas_height <= 1:
+                     # Canvas not ready or too small, skip displaying
+                     time.sleep(0.01)
+                     continue
+
+                # Get frame dimensions
+                frame_height, frame_width, _ = frame.shape
+
+                if frame_width <= 1 or frame_height <= 1:
+                     print("Warning: Received invalid frame size for displaying.")
+                     time.sleep(0.01)
+                     continue
+
+
+                # Calculate scaling factor to fit within canvas while maintaining aspect ratio
+                scale_w = canvas_width / frame_width
+                scale_h = canvas_height / frame_height
+                scale = min(scale_w, scale_h)
+
+                # Calculate new dimensions
+                new_width = int(frame_width * scale)
+                new_height = int(frame_height * scale)
+
+                # Resize frame using PIL
                 cv2image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-                # Convert to PIL Image and then to ImageTk format
                 img_pil = Image.fromarray(cv2image)
+                # Use LANCZOS for high-quality downsampling
+                img_pil_resized = img_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-                # --- Optional: Resize image to fit canvas if necessary ---
-                # Get current canvas dimensions (they might change if window is resized)
-                # canvas_width = self.canvas.winfo_width()
-                # canvas_height = self.canvas.winfo_height()
+                # Convert to PhotoImage
+                self.image_calib_tk = ImageTk.PhotoImage(image=img_pil_resized) # Reuse for preview
 
-                # Get actual frame dimensions
-                # frame_height, frame_width, _ = frame.shape
-
-                # Calculate scaling factor if needed
-                # scale_w = canvas_width / frame_width
-                # scale_h = canvas_height / frame_height
-                # scale = min(scale_w, scale_h)
-
-                # if scale < 1.0: # Only resize if image is larger than canvas
-                #     new_width = int(frame_width * scale)
-                #     new_height = int(frame_height * scale)
-                #     img_pil = img_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                # --------------------------------------------------------
-
-
-                self.image_calib_tk = ImageTk.PhotoImage(image=img_pil) # Reuse the calibration image tk variable for simplicity
-                # Update the image on the canvas. Delete previous image to avoid overlap.
+                # Update the image on the canvas. Delete previous preview image.
                 self.canvas.delete("live_preview")
-                self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image_calib_tk, tags="live_preview")
+                # Calculate position to center the scaled image on the canvas
+                x_center = (canvas_width - new_width) // 2
+                y_center = (canvas_height - new_height) // 2
+                self.canvas.create_image(x_center, y_center, anchor=tk.NW, image=self.image_calib_tk, tags="live_preview")
 
-                # A short delay to control frame rate and allow GUI updates
-                time.sleep(0.01) # Adjust this value to control preview frame rate
+                # Process GUI events to keep it responsive
+                self.root.update_idletasks()
 
+                # Short delay to control frame rate (optional, update_idletasks might be sufficient)
+                # time.sleep(0.005) # Adjust as needed
+
+            print("Preview update loop stopped.")
         except Exception as e:
             print(f"Error in preview update loop: {e}")
-            # Handle error, potentially stop preview gracefully
-            self.stop_preview()
+            # Stop preview gracefully if an error occurs in the loop
+            self.root.after(0, self.stop_preview) # Use after to call stop_preview on the main thread
+
 
     def stop_preview(self):
         """Stops the camera preview and releases the camera."""
         if self.is_previewing:
             self.is_previewing = False # Signal the thread to stop
-            # No need to explicitly join daemon thread, it will exit with app
+            # It's good practice to wait for the thread to finish if it's not a daemon thread,
+            # but since it's a daemon thread, it will exit when the main app exits.
+            # If you weren't using daemon threads, you'd do:
+            # if self.preview_thread and self.preview_thread.is_alive():
+            #     self.preview_thread.join()
 
             if self.cap and self.cap.isOpened():
                 self.cap.release()
                 print("Camera released.")
             self.cap = None
             self.latest_frame = None # Clear the latest frame
-            self.canvas.delete("live_preview") # Clear the live preview image from canvas
+
+            # Clear the live preview image from canvas
+            self.canvas.delete("live_preview")
+            # Optionally reset canvas to default background or message
+            self.canvas.delete("all")
+            # self.canvas.create_text(self.canvas.winfo_width()/2, self.canvas.winfo_height()/2, text="Preview Stopped", fill="black", font=('Arial', 16, 'bold'))
+
 
             # Restore button and control states
             self.capture_button.config(text="Start Preview")
             self.list_resolutions_button.config(state=tk.NORMAL)
             self.device_entry.config(state=tk.NORMAL)
             self.resolution_combobox.config(state="readonly")
-
-            # Optionally clear the canvas or show a static image
-            # self.canvas.delete("all") # Clear everything, including potential calibration points if not careful
-            # Or show a message:
-            # self.canvas.create_text(self.canvas.winfo_width()/2, self.canvas.winfo_height()/2, text="Preview Stopped", fill="black", font=('Arial', 16, 'bold'))
 
 
     def toggle_preview(self):
@@ -414,7 +535,6 @@ class HomographyCalibratorApp:
         frame_to_save = self.latest_frame
 
         # Get the current resolution from the camera object if possible, or rely on the combobox
-        # Relying on cap.get is more accurate if resolution wasn't set exactly as requested
         if self.cap and self.cap.isOpened():
              width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
              height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -437,6 +557,12 @@ class HomographyCalibratorApp:
             cv2.imwrite(filepath, frame_to_save)
             messagebox.showinfo("Success", f"Photo captured and saved as:\n{filepath}")
             print(f"Photo captured and saved to {filepath}")
+
+            # Optionally display the captured photo on the canvas after stopping preview
+            # self.display_image_on_canvas(frame_to_save)
+            # Store the captured frame in a different variable if you want to distinguish it from calib image
+            # self.captured_photo_cv2 = frame_to_save
+
         except Exception as e:
             messagebox.showerror("Error", f"Error saving captured photo: {e}")
             print(f"Error saving captured photo: {e}")
@@ -454,7 +580,8 @@ class HomographyCalibratorApp:
             return
         # Stop any ongoing preview before loading a new image
         self.stop_preview()
-        self.reset_calibration_data_and_display()
+        self.reset_calibration_data_and_display() # This clears the canvas
+
         img = cv2.imread(filepath)
         if img is None:
             messagebox.showerror("Error", f"Could not load calibration image from {filepath}")
@@ -462,38 +589,11 @@ class HomographyCalibratorApp:
             return
         print(f"Debug: cv2.imread successful. Image shape: {img.shape}")
         self.image_calib_path = filepath
-        self.image_calib_cv2 = img
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img_pil = Image.fromarray(img_rgb)
+        self.image_calib_cv2 = img # Store the original cv2 image
 
-        # Scale image to fit within a reasonable screen percentage
-        max_width = self.root.winfo_screenwidth() * 0.8
-        max_height = self.root.winfo_screenheight() * 0.8
+        # Display the image on the canvas, scaled to fit
+        self.display_image_on_canvas(self.image_calib_cv2)
 
-        img_width, img_height = img_pil.size
-
-        if img_width > max_width or img_height > max_height:
-            scale = min(max_width / img_width, max_height / img_height)
-            new_width = int(img_width * scale)
-            new_height = int(img_height * scale)
-            img_pil = img_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            display_width, display_height = new_width, new_height
-        else:
-            display_width, display_height = img_width, img_height
-
-        self.calib_display_width = display_width
-        self.calib_display_height = display_height
-
-        self.image_calib_tk = ImageTk.PhotoImage(image=img_pil)
-        print(f"Debug: PIL image size for display: {img_pil.size}")
-        # print(f"Debug: ImageTk.PhotoImage created: {self.image_calib_tk}") # Too verbose
-
-        self.canvas.config(width=display_width, height=display_height)
-        self.canvas.delete("all") # Clear everything, including potential old preview items
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image_calib_tk)
-        print(f"Debug: Canvas configured size (target display size): {display_width}x{display_height}")
-        self.canvas.update_idletasks()
-        # print(f"Debug: Canvas content after create_image: {self.canvas.find_all()}") # Too verbose
         print(f"Calibration image loaded: {self.image_calib_path}")
         self.point_label.config(text="Image loaded. Now load JSON.")
         self.load_calib_json_button.config(state=tk.NORMAL)
@@ -578,20 +678,17 @@ class HomographyCalibratorApp:
 
 
             self.points_calib_data = []
-            display_width = self.calib_display_width
-            display_height = self.calib_display_height
+            # Get current canvas dimensions for scaling to displayed size
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
 
-            print(f"Debug: Using Stored Display Dimensions for scaling to display: {display_width}x{display_height}")
+            if canvas_width <= 1 or canvas_height <= 1:
+                 messagebox.showwarning("Display Size Error", f"Canvas size is incorrect: {canvas_width}x{canvas_height}. Points might be misplaced.")
+                 print(f"Debug: Canvas size is incorrect: {canvas_width}x{canvas_height}. Proceeding with point loading.")
+                 # Decide if you want to stop here or proceed with potentially wrong scaling
+                 # For now, let's proceed but the point display might be wrong until canvas is valid size
+                 pass
 
-
-            if display_width <= 1 or display_height <= 1:
-                messagebox.showwarning("Display Size Error", f"Stored display size is incorrect: {display_width}x{display_height}. Points might be misplaced.")
-                print(f"Debug: Stored display size is incorrect: {display_width}x{display_height}. Proceeding with point loading, but accuracy may be affected.")
-                # Continue loading points but warn the user.
-                # Resetting json data might be too harsh here if the image loaded correctly.
-                # self.reset_calibration_json_data()
-                # return
-                pass # Allow loading but warn
 
             # Process keypoint annotations
             for res in results:
@@ -604,27 +701,32 @@ class HomographyCalibratorApp:
                     label = label or f'Point {len(self.points_calib_data) + 1}' # Generate default label if empty
 
                     # Scale points from original JSON dimensions to the original image dimensions
-                    # This is necessary if the JSON dimensions don't match the actual image dimensions
-                    # which can happen if the image was resized outside of Label Studio after annotation.
                     if effective_original_width > 0 and effective_original_height > 0:
                          pixel_x_orig = (x_percent / 100.0) * effective_original_width
                          pixel_y_orig = (y_percent / 100.0) * effective_original_height
                     else:
                          print("Warning: Effective original dimensions are zero during point scaling from JSON %!")
-                         # Fallback to scaling based on display size, but this is less accurate
-                         pixel_x_orig = (x_percent / 100.0) * img_orig_width # Use actual image original size
+                         # Fallback to scaling based on actual image original size
+                         pixel_x_orig = (x_percent / 100.0) * img_orig_width
                          pixel_y_orig = (y_percent / 100.0) * img_orig_height
 
 
-                    # Now scale the original image pixel coordinates to the currently displayed image size
-                    if img_orig_width > 0 and img_orig_height > 0 and display_width > 0 and display_height > 0:
-                         pixel_x_display = pixel_x_orig * (display_width / img_orig_width)
-                         pixel_y_display = pixel_y_orig * (display_height / img_orig_height)
+                    # Now scale the original image pixel coordinates to the currently displayed canvas size
+                    # We need the scale factor used when displaying the calibration image
+                    # A more robust way is to store the scaling factor or recalculate it here
+                    # Recalculating based on current canvas and original image size:
+                    if img_orig_width > 0 and img_orig_height > 0 and canvas_width > 0 and canvas_height > 0:
+                         scale_w = canvas_width / img_orig_width
+                         scale_h = canvas_height / img_orig_height
+                         scale = min(scale_w, scale_h) # Use the same logic as display_image_on_canvas
+
+                         pixel_x_display = pixel_x_orig * scale
+                         pixel_y_display = pixel_y_orig * scale
                     else:
-                         print("Warning: Original image or display dimensions are zero during point scaling to display!")
-                         # Fallback directly from JSON percentage to display size, least accurate
-                         pixel_x_display = (x_percent / 100.0) * display_width
-                         pixel_y_display = (y_percent / 100.0) * display_height
+                         print("Warning: Original image or canvas dimensions are zero during point scaling to display!")
+                         # Fallback to direct scaling from JSON percentage to canvas size (less accurate if aspect ratios differ)
+                         pixel_x_display = (x_percent / 100.0) * canvas_width
+                         pixel_y_display = (y_percent / 100.0) * canvas_height
 
 
                     self.points_calib_data.append({
@@ -641,7 +743,8 @@ class HomographyCalibratorApp:
                 return
 
             print(f"Loaded {len(self.points_calib_data)} keypoints from JSON.")
-            self.draw_points() # Draw the loaded points on the canvas
+            # Draw the loaded points on the canvas. This will use the calculated display pixel coordinates.
+            self.draw_points()
             self.enable_calibration_controls() # Enable relevant controls
             self.point_label.config(text="JSON loaded. Click points to input coordinates.")
 
@@ -669,10 +772,11 @@ class HomographyCalibratorApp:
         self.stop_preview()
         self.canvas.delete("all") # Clear the canvas
         self.image_calib_cv2 = None
-        self.image_calib_tk = None
+        self.image_calib_tk = None # Clear tk image
+        self.current_photo_tk = None # Clear captured photo tk image
         self.image_calib_path = None
-        self.calib_display_width = 0
-        self.calib_display_height = 0
+        # self.calib_display_width = 0 # No longer needed
+        # self.calib_display_height = 0 # No longer needed
         self.points_calib_data = []
         self.active_point_index = -1
         self.disable_calibration_controls()
@@ -708,8 +812,9 @@ class HomographyCalibratorApp:
 
     def draw_points(self):
         """Draws or updates point markers and labels on the canvas."""
-        if self.image_calib_cv2 is None or not self.points_calib_data:
-            # Clear any existing points if image is not loaded or no points
+        # Ensure canvas is not empty and calibration image is loaded before drawing points
+        if self.image_calib_tk is None or not self.points_calib_data or self.is_previewing:
+            # Clear any existing points if image is not loaded, no points, or in preview mode
             self.canvas.delete("point_marker")
             self.canvas.delete("point_label_text")
             self.canvas.delete("point_label_outline")
@@ -720,12 +825,55 @@ class HomographyCalibratorApp:
         self.canvas.delete("point_label_text")
         self.canvas.delete("point_label_outline")
 
+        # Get the current canvas dimensions to scale the point coordinates
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        # Get the dimensions of the *original* calibration image
+        if self.image_calib_cv2 is None:
+             print("Warning: Original calibration image not available for point scaling during drawing.")
+             return
+
+        img_orig_height, img_orig_width = self.image_calib_cv2.shape[:2]
+        if img_orig_width <= 1 or img_orig_height <= 1:
+             print("Warning: Original calibration image has invalid dimensions for point scaling.")
+             return
+
+        # Calculate the scale factor used when the calibration image was last displayed
+        # This assumes display_image_on_canvas was the last function to draw the image
+        scale_w = canvas_width / img_orig_width
+        scale_h = canvas_height / img_orig_height
+        display_scale = min(scale_w, scale_h)
+
+        # Need to find the offset if the image is centered on the canvas
+        scaled_img_width = int(img_orig_width * display_scale)
+        scaled_img_height = int(img_orig_height * display_scale)
+        offset_x = (canvas_width - scaled_img_width) // 2
+        offset_y = (canvas_height - scaled_img_height) // 2
+
+
         for i, point_data in enumerate(self.points_calib_data):
-            # Ensure pixel coordinates are numbers before drawing
+            # Ensure original pixel coordinates are numbers before drawing
+            # Assuming the pixel coordinates in self.points_calib_data are relative to the *original* image
+            # This requires revisiting where points are stored. If they are relative to the *displayed* image,
+            # then the scaling logic here needs adjustment.
+            # Let's assume point_data['pixel'] stores coordinates relative to the *original* image size.
+            # This makes sense for saving/loading JSON relative to the original image.
+
+            # HOWEVER, the load_calib_json currently scales points to the *display* size when loading.
+            # This means point_data['pixel'] is already relative to the canvas when loaded.
+            # This is simpler for drawing but complex for homography calculation.
+            # Let's adjust load_calib_json to store original pixel coordinates and calculate display coords here.
+
+            # * Correction: Based on the provided code, points_calib_data['pixel'] *is* being stored
+            # relative to the *displayed* image size during load_calib_json.
+            # So, the drawing should use these stored display pixel coordinates directly.
+
             if not isinstance(point_data['pixel'], (tuple, list)) or len(point_data['pixel']) != 2:
                  print(f"Warning: Invalid pixel coordinate format for point {point_data.get('label', i)}: {point_data['pixel']}")
                  continue # Skip drawing this point
 
+            # Use the stored pixel coordinates which are relative to the displayed image size
             x_float, y_float = point_data['pixel']
             label = point_data['label']
 
@@ -765,7 +913,7 @@ class HomographyCalibratorApp:
     def on_canvas_click(self, event):
         """Handles click events on the canvas to select a point."""
         # Ignore clicks if calibration image is not loaded or no points exist
-        if self.image_calib_cv2 is None or not self.points_calib_data:
+        if self.image_calib_tk is None or not self.points_calib_data or self.is_previewing:
             return
 
         click_x, click_y = event.x, event.y
@@ -775,11 +923,14 @@ class HomographyCalibratorApp:
 
         # Find the closest point to the click coordinates within the tolerance
         for i, point_data in enumerate(self.points_calib_data):
-             # Ensure pixel coordinates are valid
+             # Ensure pixel coordinates are valid and are relative to the *displayed* image on the canvas
              if not isinstance(point_data['pixel'], (tuple, list)) or len(point_data['pixel']) != 2:
                   continue # Skip invalid points
 
+             # Point coordinates are already stored relative to the displayed image size by load_calib_json
              px_float, py_float = point_data['pixel']
+
+             # Calculate distance from the click point to the point marker's center
              dist = np.sqrt((click_x - px_float)**2 + (click_y - py_float)**2)
 
              if dist < tolerance and dist < min_dist:
@@ -795,11 +946,12 @@ class HomographyCalibratorApp:
         # If no points loaded, ensure no point is active and controls are disabled
         if not self.points_calib_data:
             self.active_point_index = -1
-            self.disable_calibration_controls() # This might disable too much depending on desired state after image load
-            # Keep image load/json load enabled
+            self.disable_calibration_controls()
+            # Re-enable load buttons which might be disabled by disable_calibration_controls
             self.load_calib_image_button.config(state=tk.NORMAL)
-            if self.image_calib_cv2 is not None: # Allow loading JSON if image is present
-                self.load_calib_json_button.config(state=tk.NORMAL)
+            # Check if image is loaded to enable load json button
+            if self.image_calib_cv2 is not None:
+                 self.load_calib_json_button.config(state=tk.NORMAL)
             return
 
         # If the clicked index is the same as the current active index, do nothing
@@ -936,12 +1088,12 @@ class HomographyCalibratorApp:
 
 
     def transform_pixel_to_world(self, pixel_x_display, pixel_y_display):
-        """Transforms a pixel coordinate from the *displayed* image to real-world coordinates."""
+        """Transforms a pixel coordinate from the *displayed* image on canvas to real-world coordinates."""
         if self.homography_matrix is None:
             print("Error: Homography matrix not available for transformation.")
             return None
         if self.image_calib_cv2 is None:
-            print("Error: Calibration image not loaded for scaling.")
+            print("Error: Calibration image (original) not loaded for scaling.")
             return None
 
         # Get original image dimensions from the loaded calibration image
@@ -950,21 +1102,38 @@ class HomographyCalibratorApp:
             print("Error: Invalid original image dimensions for scaling.")
             return None
 
-        # Get the dimensions of the currently displayed image on the canvas
-        display_width = self.calib_display_width
-        display_height = self.calib_display_height
-        if display_width <= 0 or display_height <= 0:
-            print("Error: Invalid display dimensions stored for scaling.")
+        # Get the dimensions of the currently displayed image *on the canvas*
+        # Need to calculate the scale factor used during display_image_on_canvas
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        if canvas_width <= 1 or canvas_height <= 1:
+            print("Error: Canvas has invalid dimensions for scaling.")
             return None
 
-        # Scale the pixel coordinates from the displayed image size back to the original image size
-        # The homography matrix H was calculated using original image coordinates
-        scaled_pixel_x = pixel_x_display * (orig_width / display_width)
-        scaled_pixel_y = pixel_y_display * (orig_height / display_height)
+        scale_w = canvas_width / orig_width
+        scale_h = canvas_height / orig_height
+        display_scale = min(scale_w, scale_h)
 
-        # Perform the homography transformation
+        # Need to account for the offset if the image is centered on the canvas
+        scaled_img_width = int(orig_width * display_scale)
+        scaled_img_height = int(orig_height * display_scale)
+        offset_x = (canvas_width - scaled_img_width) // 2
+        offset_y = (canvas_height - scaled_img_height) // 2
+
+        # Scale the pixel coordinates from the *displayed* size back to the *original* image size
+        # This is the inverse of the scaling done in display_image_on_canvas and load_calib_json
+        if display_scale > 1e-8: # Avoid division by near zero
+             scaled_pixel_x_orig = (pixel_x_display - offset_x) / display_scale
+             scaled_pixel_y_orig = (pixel_y_display - offset_y) / display_scale
+        else:
+             print("Warning: Display scale is near zero, cannot inverse scale pixel coordinates.")
+             return None
+
+
+        # Perform the homography transformation using the scaled original pixel coordinates
         H = self.homography_matrix
-        pixel_coord_homogeneous = np.array([[scaled_pixel_x], [scaled_pixel_y], [1.0]])
+        pixel_coord_homogeneous = np.array([[scaled_pixel_x_orig], [scaled_pixel_y_orig], [1.0]])
         transformed_homogeneous_coord = np.dot(H, pixel_coord_homogeneous)
 
         # Perform perspective division
@@ -992,35 +1161,48 @@ class HomographyCalibratorApp:
             messagebox.showwarning("Image Not Loaded", "Calibration image is not loaded.")
             return
 
-        # Get the dimensions of the currently displayed image on the canvas
-        display_width = self.calib_display_width
-        display_height = self.calib_display_height
-        if display_width <= 0 or display_height <= 0:
-            messagebox.showerror("Display Error", "Invalid display dimensions stored. Cannot scale pixel coordinates.")
-            return
-
-        # Get original image dimensions from the loaded calibration image
+        # Get the dimensions of the *original* calibration image
         orig_height, orig_width = self.image_calib_cv2.shape[:2]
         if orig_width <= 0 or orig_height <= 0:
-            messagebox.showerror("Image Error", "Invalid original image dimensions.")
+            messagebox.showerror("Image Error", "Invalid original image dimensions for homography calculation.")
             return
+
+        # Get the dimensions of the currently displayed image on the canvas
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        if canvas_width <= 1 or canvas_height <= 1:
+            messagebox.showerror("Display Error", "Canvas has invalid dimensions. Cannot scale pixel coordinates for homography.")
+            return
+
+
+        # Calculate the scale factor and offset used when the calibration image was last displayed
+        scale_w = canvas_width / orig_width
+        scale_h = canvas_height / orig_height
+        display_scale = min(scale_w, scale_h)
+
+        scaled_img_width = int(orig_width * display_scale)
+        scaled_img_height = int(orig_height * display_scale)
+        offset_x = (canvas_width - scaled_img_width) // 2
+        offset_y = (canvas_height - scaled_img_height) // 2
 
 
         for point_data in self.points_calib_data:
             # Only use points that have both pixel and flat coordinates
             if point_data['flat'] is not None and point_data['pixel'] is not None:
-                # Scale pixel coordinates from the displayed image size back to the original image size
+                # point_data['pixel'] stores coordinates relative to the *displayed* image size.
+                # We need to scale them back to the *original* image size for homography calculation.
                 display_pixel_x, display_pixel_y = point_data['pixel']
 
-                if display_width > 0 and display_height > 0 and orig_width > 0 and orig_height > 0:
-                     scaled_pixel_x = display_pixel_x * (orig_width / display_width)
-                     scaled_pixel_y = display_pixel_y * (orig_height / display_height)
+                if display_scale > 1e-8: # Avoid division by near zero
+                     scaled_pixel_x_orig = (display_pixel_x - offset_x) / display_scale
+                     scaled_pixel_y_orig = (display_pixel_y - offset_y) / display_scale
                 else:
-                     print("Warning: Cannot scale pixel coordinates due to zero dimensions.")
-                     continue # Skip this point if dimensions are invalid
+                     print("Warning: Display scale is near zero, cannot inverse scale pixel coordinates for homography.")
+                     continue # Skip this point
 
 
-                src_pts.append((scaled_pixel_x, scaled_pixel_y))
+                src_pts.append((scaled_pixel_x_orig, scaled_pixel_y_orig))
                 dst_pts.append(point_data['flat'])
 
         # Need at least 4 points to calculate a homography
@@ -1085,9 +1267,8 @@ class HomographyCalibratorApp:
                     "label": point_data['label'],
                     "world_x": point_data['flat'][0],
                     "world_y": point_data['flat'][1]
-                    # You might want to add original pixel coordinates too
-                    # "pixel_x_orig": point_data['pixel_orig'][0],
-                    # "pixel_y_orig": point_data['pixel_orig'][1]
+                    # To export original pixel coords, you'd need to store them separately when loading JSON
+                    # For now, only exporting world coordinates as they are saved.
                 })
 
         # If no points have world coordinates, warn the user
@@ -1129,28 +1310,30 @@ class HomographyCalibratorApp:
         self.clear_verification_display()
 
         points_to_verify = []
-        # Identify points that do *not* have flat coordinates
+        # Identify points that do *not* have flat coordinates but have pixel coordinates
         for point_data in self.points_calib_data:
             if point_data['flat'] is None and point_data['pixel'] is not None:
                 points_to_verify.append(point_data)
 
         if not points_to_verify:
-            messagebox.showinfo("No Points to Verify", "All loaded points already have entered real-world coordinates.")
+            messagebox.showinfo("No Points to Verify", "All loaded points already have entered real-world coordinates or invalid pixel data.")
             return
 
         print("\nVerifying untransformed points...")
         points_verified_count = 0
 
         for point_data in points_to_verify:
+            # Use the pixel coordinates that are relative to the *displayed* image on the canvas
             pixel_x_display, pixel_y_display = point_data['pixel']
             label = point_data['label']
 
             # Transform the pixel coordinate to a world coordinate using the homography matrix
+            # This method now handles scaling from display coordinates back to original image coordinates
             world_coord = self.transform_pixel_to_world(pixel_x_display, pixel_y_display)
 
             if world_coord:
                 world_x, world_y = world_coord
-                print(f"  {label} (Pixel: {pixel_x_display:.2f}, {pixel_y_display:.2f}) -> World: ({world_x:.2f}, {world_y:.2f})")
+                print(f"  {label} (Pixel Display: {pixel_x_display:.2f}, {pixel_y_display:.2f}) -> World: ({world_x:.2f}, {world_y:.2f})")
 
                 # Draw a marker and text on the canvas for the transformed point
                 # Use the pixel coordinates on the displayed image
