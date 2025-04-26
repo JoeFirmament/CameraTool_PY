@@ -154,25 +154,35 @@ class HomographyCalibratorApp:
                 text=True
             )
             output = result.stdout
+            print(f"Debug: v4l2-ctl output:\n{output}")  # 完整输出
 
             # Parse resolutions from v4l2-ctl output
             supported_resolutions = []
             lines = output.splitlines()
             current_format = None
-            for line in lines:
+
+            for line_num, line in enumerate(lines):
                 line = line.strip()
-                # Look for pixel format lines
-                if line.startswith("Pixel Format:"):
-                    current_format = line.split("'")[1] if "'" in line else None
-                # Look for Size lines under a format (we'll accept common formats like YUYV, MJPG)
-                if line.startswith("Size: Discrete") and current_format:
-                    # Extract resolution (e.g., "Size: Discrete 1920x1080")
-                    res = line.split("Discrete ")[1].split()[0]
+                print(f"Debug: Processing line {line_num + 1}: {line}")  # 逐行输出
+
+                # 匹配像素格式行（更健壮的匹配）
+                format_match = re.search(r"Pixel Format: '(.+?)'", line)
+                if format_match:
+                    current_format = format_match.group(1)
+                    print(f"  Debug: Found format: {current_format}")
+                    continue  # 处理完格式后跳到下一行
+
+                # 匹配分辨率行（更健壮的匹配）
+                size_match = re.search(r"Size: Discrete (\d+x\d+)", line)
+                if size_match and current_format:
+                    res = size_match.group(1)
                     if 'x' in res:
-                        width, height = map(int, res.split('x'))
-                        resolution_str = f"{width}x{height}"
-                        if resolution_str not in supported_resolutions:
-                            supported_resolutions.append(resolution_str)
+                        if res not in supported_resolutions:
+                            supported_resolutions.append(res)
+                            print(f"  Debug:   Added resolution: {res}")
+                    continue  # 处理完分辨率后跳到下一行
+
+                print(f"  Debug:   Skipping line: {line}")  # 所有未匹配的行
 
             if not supported_resolutions:
                 messagebox.showerror(
