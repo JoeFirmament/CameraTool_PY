@@ -4,7 +4,7 @@ import tkinter.ttk as ttk
 import cv2
 import json
 import numpy as np
-from PIL import Image, ImageTk, ExifTags
+from PIL import Image, ImageTk # Keep Image and ImageTk for image display, ExifTags is not needed
 import os
 from datetime import datetime, timezone, timedelta
 import subprocess
@@ -15,11 +15,12 @@ import time
 class HomographyCalibratorApp:
     def __init__(self, root):
         self.root = root
+        # Initial title, will be updated with image resolution
         self.root.title("Homography Calibrator from Label Studio JSON")
 
         # Set initial window size and position (WidthxHeight+X+Y)
-        # Opens at 1920x1080 at the top-left corner (0,0)
-        self.root.geometry("1920x1080+0+0")
+        # Opens at a reasonable default size, can be resized by user
+        self.root.geometry("1000x700") # Adjusted default size
 
         # --- Add Window Icon ---
         icon_path = "icon.png" # Make sure you have an icon.png file in the same directory
@@ -40,14 +41,13 @@ class HomographyCalibratorApp:
         self.image_calib_path = None
         self.image_calib_cv2 = None
         self.image_calib_tk = None
-        # self.calib_display_width = 0 # No longer needed as canvas size is dynamic
-        # self.calib_display_height = 0 # No longer needed as canvas size is dynamic
-        self.points_calib_data = []
+        # We will store pixel coordinates relative to the ORIGINAL image size
+        # and calculate display coordinates on the fly.
+        self.points_calib_data = [] # Each item will have 'label', 'pixel_orig', 'flat', 'tk_id', 'pixel_display'
         self.active_point_index = -1
         self.homography_matrix = None
         self.verification_tk_ids = []
-        self.image_info_path = None
-        self.image_info_pil = None
+        # Removed image_info_path and image_info_pil
 
         # Camera Capture Data
         self.cap = None # OpenCV VideoCapture object
@@ -61,128 +61,191 @@ class HomographyCalibratorApp:
         main_pane.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Canvas for displaying images/preview
-        # Set an initial minimum size, but it will expand with the pane
-        self.canvas = tk.Canvas(main_pane, bg="gray", width=1280, height=720) # Initial size, adjust as needed
+        self.canvas = tk.Canvas(main_pane, bg="gray", width=800, height=600) # Adjusted initial size
         self.canvas.bind("<Button-1>", self.on_canvas_click)
-        # Allow the left pane (containing the canvas) to expand
-        main_pane.add(self.canvas, weight=1)
+        main_pane.add(self.canvas, weight=1) # Allow the left pane (containing the canvas) to expand
 
 
-        # Controls Frame
-        self.controls_frame = ttk.Frame(main_pane, padding="10")
-        # Set a minimum width for the controls frame if needed, it has weight=0
-        # self.controls_frame.config(width=300) # Example minimum width
-        main_pane.add(self.controls_frame, weight=0)
+        # Controls Frame (Right Pane)
+        self.controls_frame = ttk.Frame(main_pane, padding="5") # Reduced padding
+        main_pane.add(self.controls_frame, weight=0) # Right pane has fixed width initially
         self.controls_frame.columnconfigure(0, weight=1)
         self.controls_frame.columnconfigure(1, weight=1)
 
         # --- Calibration Section ---
         calib_label = ttk.Label(self.controls_frame, text="Calibration Section", font=('Arial', 12, 'bold'))
-        calib_label.grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky=tk.W)
+        calib_label.grid(row=0, column=0, columnspan=2, pady=(0, 5), sticky=tk.W) # Reduced pady
 
         self.load_calib_image_button = ttk.Button(self.controls_frame, text="1. Load Calibration Image", command=self.load_calib_image)
-        self.load_calib_image_button.grid(row=1, column=0, columnspan=2, pady=2, sticky=tk.W+tk.E)
+        self.load_calib_image_button.grid(row=1, column=0, columnspan=2, pady=1, sticky=tk.W+tk.E) # Reduced pady
 
         self.load_calib_json_button = ttk.Button(self.controls_frame, text="2. Load Calibration JSON", command=self.load_calib_json, state=tk.DISABLED)
-        self.load_calib_json_button.grid(row=2, column=0, columnspan=2, pady=2, sticky=tk.W+tk.E)
+        self.load_calib_json_button.grid(row=2, column=0, columnspan=2, pady=1, sticky=tk.W+tk.E) # Reduced pady
+
+        # 新增的加载世界坐标按钮
+        self.load_world_coords_button = ttk.Button(self.controls_frame, text="3. Load World Coords (JSON)", command=self.load_world_coordinates_from_json, state=tk.DISABLED)
+        self.load_world_coords_button.grid(row=3, column=0, columnspan=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
+
 
         self.point_label = ttk.Label(self.controls_frame, text="Load image and JSON first")
-        self.point_label.grid(row=3, column=0, columnspan=2, pady=(10, 5), sticky=tk.W)
+        self.point_label.grid(row=4, column=0, columnspan=2, pady=(5, 2), sticky=tk.W) # Adjusted row
 
         self.flat_x_label = ttk.Label(self.controls_frame, text="Real World X:")
-        self.flat_x_label.grid(row=4, column=0, padx=2, pady=2, sticky=tk.W)
+        self.flat_x_label.grid(row=5, column=0, padx=2, pady=1, sticky=tk.W) # Adjusted row
         self.flat_x_entry = ttk.Entry(self.controls_frame, state=tk.DISABLED)
-        self.flat_x_entry.grid(row=4, column=1, padx=2, pady=2, sticky=tk.W+tk.E)
+        self.flat_x_entry.grid(row=5, column=1, padx=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
         self.flat_y_label = ttk.Label(self.controls_frame, text="Real World Y:")
-        self.flat_y_label.grid(row=5, column=0, padx=2, pady=2, sticky=tk.W)
+        self.flat_y_label.grid(row=6, column=0, padx=2, pady=1, sticky=tk.W) # Adjusted row
         self.flat_y_entry = ttk.Entry(self.controls_frame, state=tk.DISABLED)
-        self.flat_y_entry.grid(row=5, column=1, padx=2, pady=2, sticky=tk.W+tk.E)
+        self.flat_y_entry.grid(row=6, column=1, padx=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
         self.save_button = ttk.Button(self.controls_frame, text="Save", command=self.save_coordinates, state=tk.DISABLED)
-        self.save_button.grid(row=6, column=0, padx=2, pady=5, sticky=tk.W+tk.E)
+        self.save_button.grid(row=7, column=0, padx=2, pady=2, sticky=tk.W+tk.E) # Adjusted row
 
         self.delete_button = ttk.Button(self.controls_frame, text="Delete", command=self.delete_coordinates, state=tk.DISABLED)
-        self.delete_button.grid(row=6, column=1, padx=2, pady=5, sticky=tk.W+tk.E)
+        self.delete_button.grid(row=7, column=1, padx=2, pady=2, sticky=tk.W+tk.E) # Adjusted row
 
         self.calculate_button = ttk.Button(self.controls_frame, text="Calculate Homography", command=self.calculate_homography, state=tk.DISABLED)
-        self.calculate_button.grid(row=7, column=0, columnspan=2, pady=(10, 5), sticky=tk.W+tk.E)
+        self.calculate_button.grid(row=8, column=0, columnspan=2, pady=(5, 2), sticky=tk.W+tk.E) # Adjusted row
 
-        self.export_button = ttk.Button(self.controls_frame, text="Export Coordinates (JSON)", command=self.export_coordinates_to_json, state=tk.DISABLED)
-        self.export_button.grid(row=8, column=0, columnspan=2, pady=2, sticky=tk.W+tk.E)
+        # Original Export Points from JSON button
+        self.export_button = ttk.Button(self.controls_frame, text="Export Original Points (JSON)", command=self.export_coordinates_to_json, state=tk.DISABLED)
+        self.export_button.grid(row=9, column=0, columnspan=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
+
+        # Export World Coordinates button
+        self.export_world_coords_button = ttk.Button(self.controls_frame, text="Export World Coords (JSON)", command=self.export_world_coordinates_to_json, state=tk.DISABLED)
+        self.export_world_coords_button.grid(row=10, column=0, columnspan=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
         self.verify_button = ttk.Button(self.controls_frame, text="Verify", command=self.verify_untransformed_points, state=tk.DISABLED)
-        self.verify_button.grid(row=9, column=0, padx=2, pady=(10, 2), sticky=tk.W+tk.E)
+        self.verify_button.grid(row=11, column=0, padx=2, pady=(5, 1), sticky=tk.W+tk.E) # Adjusted row
 
         self.clear_verify_button = ttk.Button(self.controls_frame, text="Clear Verify", command=self.clear_verification_display, state=tk.DISABLED)
-        self.clear_verify_button.grid(row=9, column=1, padx=2, pady=(10, 2), sticky=tk.W+tk.E)
+        self.clear_verify_button.grid(row=11, column=1, padx=2, pady=(5, 1), sticky=tk.W+tk.E) # Adjusted row
 
         self.homography_label = ttk.Label(self.controls_frame, text="Homography Matrix:", font=('Arial', 10, 'bold'))
-        self.homography_label.grid(row=10, column=0, columnspan=2, pady=(10,0), sticky=tk.W)
+        self.homography_label.grid(row=12, column=0, columnspan=2, pady=(5,0), sticky=tk.W) # Adjusted row
 
-        self.homography_text = tk.Text(self.controls_frame, height=6, width=30, state=tk.DISABLED, wrap=tk.WORD)
-        self.homography_text.grid(row=11, column=0, columnspan=2, pady=5, sticky=tk.W+tk.E)
+        # Increased height for Homography Matrix text box
+        self.homography_text = tk.Text(self.controls_frame, height=10, width=40, state=tk.DISABLED, wrap=tk.WORD)
+        self.homography_text.grid(row=13, column=0, columnspan=2, pady=2, sticky=tk.W+tk.E) # Adjusted row and reduced pady
         self.homography_text.config(state=tk.NORMAL)
         self.homography_text.delete(1.0, tk.END)
         self.homography_text.insert(tk.END, "Load calibration image first.")
         self.homography_text.config(state=tk.DISABLED)
 
         separator = ttk.Separator(self.controls_frame, orient='horizontal')
-        separator.grid(row=12, column=0, columnspan=2, sticky=tk.W+tk.E, pady=10)
+        separator.grid(row=14, column=0, columnspan=2, sticky=tk.W+tk.E, pady=5) # Adjusted row and reduced pady
 
-        # --- Camera Capture Section ---
+        # --- Camera Capture Section --- (Retained as requested)
         camera_label = ttk.Label(self.controls_frame, text="Camera Capture Section", font=('Arial', 12, 'bold'))
-        camera_label.grid(row=13, column=0, columnspan=2, pady=(0, 10), sticky=tk.W)
+        camera_label.grid(row=15, column=0, columnspan=2, pady=(0, 5), sticky=tk.W) # Adjusted row
 
         device_label = ttk.Label(self.controls_frame, text="Camera Device:")
-        device_label.grid(row=14, column=0, padx=2, pady=2, sticky=tk.W)
+        device_label.grid(row=16, column=0, padx=2, pady=1, sticky=tk.W) # Adjusted row
         self.device_entry = ttk.Entry(self.controls_frame)
         self.device_entry.insert(0, "/dev/video0") # Default device
-        self.device_entry.grid(row=14, column=1, padx=2, pady=2, sticky=tk.W+tk.E)
+        self.device_entry.grid(row=16, column=1, padx=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
         self.list_resolutions_button = ttk.Button(self.controls_frame, text="List Resolutions", command=self.list_camera_resolutions)
-        self.list_resolutions_button.grid(row=15, column=0, columnspan=2, pady=2, sticky=tk.W+tk.E)
+        self.list_resolutions_button.grid(row=17, column=0, columnspan=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
         resolution_label = ttk.Label(self.controls_frame, text="Resolution:")
-        resolution_label.grid(row=16, column=0, padx=2, pady=2, sticky=tk.W)
+        resolution_label.grid(row=18, column=0, padx=2, pady=1, sticky=tk.W) # Adjusted row
         self.resolution_combobox = ttk.Combobox(self.controls_frame, state="readonly")
-        self.resolution_combobox.grid(row=16, column=1, padx=2, pady=2, sticky=tk.W+tk.E)
+        self.resolution_combobox.grid(row=18, column=1, padx=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
         # Button to toggle preview/capture
         self.capture_button = ttk.Button(self.controls_frame, text="Start Preview", command=self.toggle_preview, state=tk.DISABLED)
-        self.capture_button.grid(row=17, column=0, columnspan=2, pady=2, sticky=tk.W+tk.E)
+        self.capture_button.grid(row=19, column=0, columnspan=2, pady=2, sticky=tk.W+tk.E) # Adjusted row
 
-        separator2 = ttk.Separator(self.controls_frame, orient='horizontal')
-        separator2.grid(row=18, column=0, columnspan=2, sticky=tk.W+tk.E, pady=10)
-
-        # --- Image Info Section ---
-        info_label = ttk.Label(self.controls_frame, text="Image Info Section", font=('Arial', 12, 'bold'))
-        info_label.grid(row=19, column=0, columnspan=2, pady=(0, 5), sticky=tk.W)
-
-        self.load_image_info_button = ttk.Button(self.controls_frame, text="Load Image for Info", command=self.load_image_info)
-        self.load_image_info_button.grid(row=20, column=0, columnspan=2, pady=2, sticky=tk.W+tk.E)
-
-        self.image_info_label = ttk.Label(self.controls_frame, text="Image Info:")
-        self.image_info_label.grid(row=21, column=0, columnspan=2, pady=(10, 0), sticky=tk.W)
-        self.image_info_text = tk.Text(self.controls_frame, height=10, width=30, state=tk.DISABLED, wrap=tk.WORD)
-        self.image_info_text.grid(row=22, column=0, columnspan=2, pady=5, sticky=tk.W+tk.E)
-        self.image_info_text.config(state=tk.NORMAL)
-        self.image_info_text.delete(1.0, tk.END)
-        self.image_info_text.insert(tk.END, "Load image for info...")
-        self.image_info_text.config(state=tk.DISABLED)
+        # Removed Image Info Section GUI elements
 
         self.quit_button = ttk.Button(self.controls_frame, text="Quit", command=root.quit)
-        self.quit_button.grid(row=23, column=0, columnspan=2, pady=(20, 5), sticky=tk.W+tk.E)
+        # Adjusted row for the quit button after adding the new export button and shifting others
+        self.quit_button.grid(row=21, column=0, columnspan=2, pady=(10, 2), sticky=tk.W+tk.E) # Adjusted row and reduced pady
 
         # Configure row weights for expandability
-        self.controls_frame.rowconfigure(11, weight=1)
-        self.controls_frame.rowconfigure(22, weight=1)
+        # Keep homography text area expandable
+        self.controls_frame.rowconfigure(13, weight=1) # Adjusted row index
 
         # Bind the close event to stop the preview if it's running
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # Bind the canvas configure event to redraw when canvas size changes
         self.canvas.bind("<Configure>", self.on_canvas_configure)
+
+
+    # --- New method to load world coordinates from JSON ---
+    def load_world_coordinates_from_json(self):
+        if not self.points_calib_data:
+            messagebox.showwarning("加载错误", "请先加载标定点 JSON 文件。")
+            return
+
+        filepath = filedialog.askopenfilename(
+            title="选择世界坐标 JSON 文件",
+            filetypes=(("JSON files", "*.json"), ("All files", "*.*"))
+        )
+        if not filepath:
+            return
+
+        try:
+            with open(filepath, 'r') as f:
+                world_coords_data = json.load(f)
+
+            if not isinstance(world_coords_data, list):
+                 messagebox.showerror("格式错误", "导入的 JSON 文件格式不正确，应为列表结构。")
+                 return
+
+            updated_count = 0
+            missing_points = [] # To track points in JSON that don't match loaded points
+
+            # Create a dictionary for quick lookup of points by label
+            points_dict = {point['label']: point for point in self.points_calib_data}
+
+            for item in world_coords_data:
+                label = item.get('label')
+                world_x = item.get('world_x')
+                world_y = item.get('world_y')
+
+                if label is not None and world_x is not None and world_y is not None:
+                    if label in points_dict:
+                        # Update the 'flat' coordinate for the matching point
+                        points_dict[label]['flat'] = (float(world_x), float(world_y))
+                        updated_count += 1
+                        print(f"已通过导入更新点 '{label}' 的世界坐标为: ({world_x}, {world_y})")
+                        # Optional: Update the color of the point marker on the canvas immediately
+                        # This would require finding the tk_id and updating the itemconfig
+                        # For now, draw_points() will handle this on redraw
+                    else:
+                        missing_points.append(label)
+                        print(f"警告: 导入文件中点 '{label}' 在当前加载的标定点中不存在。")
+                else:
+                    print(f"警告: 导入文件中存在格式不正确的条目: {item}")
+
+
+            if updated_count > 0:
+                messagebox.showinfo("导入成功", f"成功导入并更新了 {updated_count} 个点的世界坐标。")
+                self.draw_points() # Redraw points to update colors
+                self.check_calculate_button_state() # Update button states
+            elif not missing_points:
+                 messagebox.showwarning("导入完成", "导入文件中没有找到与当前加载的标定点相匹配的点。")
+            else:
+                 messagebox.showwarning("导入完成", "导入文件中没有找到与当前加载的标定点相匹配的有效点。")
+
+            if missing_points:
+                 print(f"\n导入文件中未匹配的点标签: {', '.join(missing_points)}")
+
+
+        except FileNotFoundError:
+            messagebox.showerror("错误", f"文件未找到: {filepath}")
+        except json.JSONDecodeError:
+            messagebox.showerror("格式错误", "无效的 JSON 文件格式。请检查文件内容。")
+        except Exception as e:
+            messagebox.showerror("发生错误", f"导入世界坐标时发生错误: {str(e)}")
+            import traceback
+            traceback.print_exc() # Print traceback for debugging
+
 
     def on_closing(self):
         """Handles the window closing event to stop the camera preview."""
@@ -191,25 +254,51 @@ class HomographyCalibratorApp:
 
     def on_canvas_configure(self, event):
         """Handles canvas resizing to redraw the current image/preview."""
-        print(f"Debug: Canvas configured to size: {event.width}x{event.height}")
+        # print(f"Debug: Canvas configured to size: {event.width}x{event.height}") # Uncomment for debug
         # When the canvas is resized, redraw the current content
+        # Note: Redrawing calibration points also happens here indirectly
         if self.is_previewing:
-             # If preview is running, the update_preview loop will handle redrawing.
+             # If preview is running, the update_preview loop will handle redrawing based on new canvas size.
              # No explicit action needed here unless the preview loop is paused or optimized.
              pass
-        elif self.image_calib_tk:
+        elif self.image_calib_cv2 is not None: # Check if calibration image is loaded (original cv2 image)
             # If a calibration image is loaded, redraw it scaled to the new canvas size
             self.display_image_on_canvas(self.image_calib_cv2) # Redraw the original cv2 image
-        elif self.current_photo_tk:
-             # If a captured photo is displayed, redraw it scaled
-             # Need to store the captured cv2 image as well to redraw correctly
-             # For simplicity now, if a photo was captured, just clear the canvas on resize
-             self.canvas.delete("all")
-             self.canvas.create_text(event.width/2, event.height/2, text="Resize detected. Recapture or Load image.", fill="black", font=('Arial', 12))
+            self.draw_points() # Redraw points based on new canvas size
+            self.verify_untransformed_points() # Redraw verification markers if any
+
+        # If a captured photo were being displayed (not implemented fully yet), handle it here:
+        # elif self.captured_photo_cv2 is not None:
+        #      self.display_image_on_canvas(self.captured_photo_cv2)
+
+
+    def get_display_scale_and_offset(self):
+        """Calculates the scale factor and offset for displaying the original image on the current canvas."""
+        if self.image_calib_cv2 is None:
+            return 1.0, 0, 0 # Default scale and offset if no image loaded
+
+        orig_height, orig_width = self.image_calib_cv2.shape[:2]
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        if orig_width <= 1 or orig_height <= 1 or canvas_width <= 1 or canvas_height <= 1:
+             return 1.0, 0, 0 # Cannot calculate with invalid dimensions
+
+        scale_w = canvas_width / orig_width
+        scale_h = canvas_height / orig_height
+        display_scale = min(scale_w, scale_h)
+
+        scaled_img_width = int(orig_width * display_scale)
+        scaled_img_height = int(orig_height * display_scale)
+
+        offset_x = (canvas_width - scaled_img_width) // 2
+        offset_y = (canvas_height - scaled_img_height) // 2
+
+        return display_scale, offset_x, offset_y
 
 
     def display_image_on_canvas(self, cv2_image):
-        """Displays a cv2 image on the canvas, scaled to fit."""
+        """Displays a cv2 image on the canvas, scaled to fit and centered."""
         if cv2_image is None:
             self.canvas.delete("all")
             self.image_calib_tk = None
@@ -236,14 +325,12 @@ class HomographyCalibratorApp:
              return # Cannot display invalid image
 
 
-        # Calculate scaling factor to fit within canvas while maintaining aspect ratio
-        scale_w = canvas_width / img_width
-        scale_h = canvas_height / img_height
-        scale = min(scale_w, scale_h)
+        # Calculate scaling factor and new dimensions to fit within canvas while maintaining aspect ratio
+        display_scale, offset_x, offset_y = self.get_display_scale_and_offset()
 
-        # Calculate new dimensions
-        new_width = int(img_width * scale)
-        new_height = int(img_height * scale)
+        new_width = int(img_width * display_scale)
+        new_height = int(img_height * display_scale)
+
 
         # Resize image using PIL
         img_rgb = cv2.cvtColor(cv2_image, cv2.COLOR_BGR2RGB)
@@ -255,20 +342,17 @@ class HomographyCalibratorApp:
         img_tk = ImageTk.PhotoImage(image=img_pil_resized)
 
         # Update the canvas
-        self.canvas.delete("all") # Clear previous content
-        # Calculate position to center the image on the canvas
-        x_center = (canvas_width - new_width) // 2
-        y_center = (canvas_height - new_height) // 2
-        self.canvas.create_image(x_center, y_center, anchor=tk.NW, image=img_tk)
+        # Delete only specific tags if managing multiple layers (e.g., live_preview vs calib_image)
+        # For now, assume this is for the calibration image or a static photo
+        self.canvas.delete("calibration_image") # Clear previous calibration image
+        self.canvas.create_image(offset_x, offset_y, anchor=tk.NW, image=img_tk, tags="calibration_image")
+
 
         # Store the PhotoImage to prevent garbage collection
         # If it's a calibration image, store in self.image_calib_tk
         # If it's a captured photo, store in self.current_photo_tk
         # Need a way to differentiate or manage which one is currently displayed
-        # For simplicity, let's assume this function is called for either calib or captured photo.
-        # A better approach might be to pass a flag or have separate display methods.
-        # For now, let's store it in self.image_calib_tk, as it's the primary display variable.
-        # When previewing, we'll handle the tk image in update_preview.
+        # Let's store the currently displayed PhotoImage in self.image_calib_tk for static images.
         self.image_calib_tk = img_tk # Overwrite for current displayed static image
 
 
@@ -276,18 +360,18 @@ class HomographyCalibratorApp:
         """Lists all supported resolutions for the specified camera device using v4l2-ctl."""
         device = self.device_entry.get()
         if not device:
-            messagebox.showerror("Error", "Please enter a camera device (e.g., /dev/video0).")
+            messagebox.showerror("Error", "请填写摄像头设备路径 (例如: /dev/video0)。")
             return
 
         try:
             # Check if v4l2-ctl is available
             subprocess.run(["v4l2-ctl", "--version"], check=True, capture_output=True, text=True)
         except FileNotFoundError:
-            messagebox.showerror("Error", "v4l2-ctl not found. Please install v4l-utils (e.g., 'sudo apt install v4l-utils' on Ubuntu).")
+            messagebox.showerror("Error", "未找到 v4l2-ctl 命令。请安装 v4l-utils (例如，在 Ubuntu 上运行 'sudo apt install v4l-utils')。")
             print("Error: v4l2-ctl not found.")
             return
         except subprocess.CalledProcessError:
-            messagebox.showerror("Error", "Failed to run v4l2-ctl. Ensure v4l-utils is installed correctly.")
+            messagebox.showerror("Error", "运行 v4l2-ctl 失败。请确保已正确安装 v4l-utils。")
             print("Error: Failed to run v4l2-ctl.")
             return
 
@@ -300,7 +384,7 @@ class HomographyCalibratorApp:
                 text=True
             )
             output = result.stdout
-            print(f"Debug: v4l2-ctl output:\n{output}")
+            # print(f"Debug: v4l2-ctl output:\n{output}") # Uncomment for debug
 
             supported_resolutions = set() # Use a set to store unique resolutions
 
@@ -317,8 +401,7 @@ class HomographyCalibratorApp:
             if not supported_resolutions:
                 messagebox.showerror(
                     "Error",
-                    f"No supported resolutions found for device {device}. "
-                    "The device may be invalid, not connected, or not properly configured."
+                    f"未找到设备 {device} 支持的分辨率。设备可能无效、未连接或配置不正确。"
                 )
                 print(f"Error: No resolutions found for device {device}.")
                 self.resolution_combobox['values'] = []
@@ -339,20 +422,19 @@ class HomographyCalibratorApp:
                      self.resolution_combobox.set(sorted_resolutions[0])
 
             self.capture_button.config(state=tk.NORMAL)
-            messagebox.showinfo("Resolutions", f"Supported resolutions:\n{', '.join(sorted_resolutions)}")
+            # messagebox.showinfo("分辨率", f"支持的分辨率:\n{', '.join(sorted_resolutions)}") # Can be annoying, uncomment if needed
             print(f"Supported resolutions for {device}: {sorted_resolutions}")
 
         except subprocess.CalledProcessError as e:
             messagebox.showerror(
                 "Error",
-                f"Failed to access device {device}. "
-                "The device may be invalid, not connected, or not properly configured."
+                f"访问设备 {device} 失败。设备可能无效、未连接或配置不正确。"
             )
             print(f"Error accessing device {device}: {e}")
             self.resolution_combobox['values'] = []
             self.capture_button.config(state=tk.DISABLED)
         except Exception as e:
-            messagebox.showerror("Error", f"Error listing resolutions: {e}")
+            messagebox.showerror("Error", f"列出分辨率时发生错误: {e}")
             print(f"Error listing resolutions for {device}: {e}")
             self.resolution_combobox['values'] = []
             self.capture_button.config(state=tk.DISABLED)
@@ -362,17 +444,18 @@ class HomographyCalibratorApp:
         device = self.device_entry.get()
         resolution_str = self.resolution_combobox.get()
         if not device or not resolution_str:
-            messagebox.showwarning("Warning", "Please specify device and select a resolution before starting preview.")
+            messagebox.showwarning("警告", "请在开始预览前指定设备并选择分辨率。")
             return
 
         if self.is_previewing:
-            print("Preview is already running.")
+            print("预览已在运行中。")
             return
 
-        # Stop any currently displayed static image
+        # Clear any currently displayed static image or points
         self.canvas.delete("all")
         self.image_calib_tk = None
         self.current_photo_tk = None
+        self.image_calib_cv2 = None # Clear calibration image data
 
 
         try:
@@ -381,7 +464,7 @@ class HomographyCalibratorApp:
             self.cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
 
             if not self.cap.isOpened():
-                messagebox.showerror("Error", f"Could not open camera device {device}. Make sure it is not in use by another application.")
+                messagebox.showerror("错误", f"无法打开摄像头设备 {device}。请确保它未被其他应用程序占用。")
                 self.stop_preview() # Ensure cleanup even on failure
                 return
 
@@ -393,11 +476,10 @@ class HomographyCalibratorApp:
             actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             if actual_width != width or actual_height != height:
-                 print(f"Warning: Requested resolution {resolution_str} not fully supported by camera. "
-                       f"Using {actual_width}x{actual_height}. The preview will be scaled to fit the canvas.")
+                 print(f"警告: 请求的分辨率 {resolution_str} 未被摄像头完全支持。正在使用 {actual_width}x{actual_height}。预览将被缩放以适应画布。")
 
             self.is_previewing = True
-            self.capture_button.config(text="Capture Frame")
+            self.capture_button.config(text="捕获帧")
             # Disable controls while previewing
             self.list_resolutions_button.config(state=tk.DISABLED)
             self.device_entry.config(state=tk.DISABLED)
@@ -409,10 +491,10 @@ class HomographyCalibratorApp:
             self.preview_thread.start()
 
         except ValueError:
-             messagebox.showerror("Error", f"Invalid resolution format: {resolution_str}")
+             messagebox.showerror("错误", f"无效的分辨率格式: {resolution_str}")
              self.stop_preview()
         except Exception as e:
-            messagebox.showerror("Error", f"Error starting camera preview: {e}")
+            messagebox.showerror("错误", f"启动摄像头预览时发生错误: {e}")
             print(f"Error starting camera preview: {e}")
             self.stop_preview() # Ensure cleanup on error
 
@@ -422,7 +504,7 @@ class HomographyCalibratorApp:
             while self.is_previewing and self.cap and self.cap.isOpened():
                 ret, frame = self.cap.read()
                 if not ret:
-                    print("Warning: Could not read frame from camera.")
+                    print("警告: 无法从摄像头读取帧。")
                     # Add a small delay and continue, might be temporary issue
                     time.sleep(0.05)
                     continue
@@ -443,19 +525,23 @@ class HomographyCalibratorApp:
                 frame_height, frame_width, _ = frame.shape
 
                 if frame_width <= 1 or frame_height <= 1:
-                     print("Warning: Received invalid frame size for displaying.")
+                     print("警告: 收到无效的帧大小以进行显示。")
                      time.sleep(0.01)
                      continue
 
-
                 # Calculate scaling factor to fit within canvas while maintaining aspect ratio
+                # Since we don't store the cv2 image for preview in self.image_calib_cv2,
+                # we need to calculate scale and offset based on current frame size
                 scale_w = canvas_width / frame_width
                 scale_h = canvas_height / frame_height
-                scale = min(scale_w, scale_h)
+                display_scale = min(scale_w, scale_h)
 
-                # Calculate new dimensions
-                new_width = int(frame_width * scale)
-                new_height = int(frame_height * scale)
+                new_width = int(frame_width * display_scale)
+                new_height = int(frame_height * display_scale)
+
+                offset_x = (canvas_width - new_width) // 2
+                offset_y = (canvas_height - new_height) // 2
+
 
                 # Resize frame using PIL
                 cv2image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -469,9 +555,7 @@ class HomographyCalibratorApp:
                 # Update the image on the canvas. Delete previous preview image.
                 self.canvas.delete("live_preview")
                 # Calculate position to center the scaled image on the canvas
-                x_center = (canvas_width - new_width) // 2
-                y_center = (canvas_height - new_height) // 2
-                self.canvas.create_image(x_center, y_center, anchor=tk.NW, image=self.image_calib_tk, tags="live_preview")
+                self.canvas.create_image(offset_x, offset_y, anchor=tk.NW, image=self.image_calib_tk, tags="live_preview")
 
                 # Process GUI events to keep it responsive
                 self.root.update_idletasks()
@@ -479,9 +563,9 @@ class HomographyCalibratorApp:
                 # Short delay to control frame rate (optional, update_idletasks might be sufficient)
                 # time.sleep(0.005) # Adjust as needed
 
-            print("Preview update loop stopped.")
+            print("预览更新循环已停止。")
         except Exception as e:
-            print(f"Error in preview update loop: {e}")
+            print(f"预览更新循环中发生错误: {e}")
             # Stop preview gracefully if an error occurs in the loop
             self.root.after(0, self.stop_preview) # Use after to call stop_preview on the main thread
 
@@ -498,22 +582,32 @@ class HomographyCalibratorApp:
 
             if self.cap and self.cap.isOpened():
                 self.cap.release()
-                print("Camera released.")
+                print("摄像头已释放。")
             self.cap = None
             self.latest_frame = None # Clear the latest frame
 
-            # Clear the live preview image from canvas
+            # Clear the live preview image from canvas and any potential old calibration markers/text
             self.canvas.delete("live_preview")
             # Optionally reset canvas to default background or message
-            self.canvas.delete("all")
-            # self.canvas.create_text(self.canvas.winfo_width()/2, self.canvas.winfo_height()/2, text="Preview Stopped", fill="black", font=('Arial', 16, 'bold'))
+            # self.canvas.delete("all") # Only clear if you want everything gone
+            # Center text on the canvas
+            canvas_center_x = self.canvas.winfo_width() / 2
+            canvas_center_y = self.canvas.winfo_height() / 2
+            if canvas_center_x > 0 and canvas_center_y > 0: # Ensure canvas has valid dimensions
+                 self.canvas.create_text(canvas_center_x, canvas_center_y, text="预览已停止", fill="black", font=('Arial', 16, 'bold'))
 
 
             # Restore button and control states
-            self.capture_button.config(text="Start Preview")
+            self.capture_button.config(text="开始预览")
             self.list_resolutions_button.config(state=tk.NORMAL)
             self.device_entry.config(state=tk.NORMAL)
             self.resolution_combobox.config(state="readonly")
+
+            # If calibration image was loaded before preview, redraw it
+            if self.image_calib_cv2 is not None:
+                 self.display_image_on_canvas(self.image_calib_cv2)
+                 self.draw_points() # Redraw calibration points
+                 self.verify_untransformed_points() # Redraw verification points
 
 
     def toggle_preview(self):
@@ -526,7 +620,7 @@ class HomographyCalibratorApp:
     def capture_frame(self):
         """Captures a single frame from the current preview (if running) and saves it."""
         if not self.is_previewing or self.latest_frame is None:
-            messagebox.showwarning("Warning", "No preview running or frame available to capture.")
+            messagebox.showwarning("警告", "没有正在运行的预览或帧可捕获。")
             # Ensure preview is stopped if somehow in a bad state
             self.stop_preview()
             return
@@ -542,7 +636,7 @@ class HomographyCalibratorApp:
         else:
              # Fallback to combobox value, though less reliable after start_preview
              resolution = self.resolution_combobox.get()
-             print(f"Warning: Using resolution from combobox ({resolution}) for filename as camera object is not available.")
+             print(f"警告: 相机对象不可用，使用组合框中的分辨率 ({resolution}) 作为文件名。")
 
 
         # Generate filename with Beijing timezone (UTC+8) timestamp
@@ -555,16 +649,16 @@ class HomographyCalibratorApp:
         try:
             # Save the image
             cv2.imwrite(filepath, frame_to_save)
-            messagebox.showinfo("Success", f"Photo captured and saved as:\n{filepath}")
-            print(f"Photo captured and saved to {filepath}")
+            messagebox.showinfo("成功", f"照片已捕获并保存为:\n{filepath}")
+            print(f"照片已捕获并保存到 {filepath}")
 
             # Optionally display the captured photo on the canvas after stopping preview
-            # self.display_image_on_canvas(frame_to_save)
             # Store the captured frame in a different variable if you want to distinguish it from calib image
             # self.captured_photo_cv2 = frame_to_save
+            # self.display_image_on_canvas(self.captured_photo_cv2) # Call display function if you want to show the photo
 
         except Exception as e:
-            messagebox.showerror("Error", f"Error saving captured photo: {e}")
+            messagebox.showerror("错误", f"保存捕获照片时发生错误: {e}")
             print(f"Error saving captured photo: {e}")
         finally:
              # Always stop the preview after capturing a frame
@@ -573,43 +667,52 @@ class HomographyCalibratorApp:
 
     def load_calib_image(self):
         filepath = filedialog.askopenfilename(
-            title="Select Calibration Image File",
+            title="选择标定图像文件",
             filetypes=(("Image files", "*.jpg *.jpeg *.png *.bmp *.tiff"), ("All files", "*.*"))
         )
         if not filepath:
             return
         # Stop any ongoing preview before loading a new image
-        self.stop_preview()
-        self.reset_calibration_data_and_display() # This clears the canvas
+        self.stop_preview() # This also clears the canvas
 
         img = cv2.imread(filepath)
         if img is None:
-            messagebox.showerror("Error", f"Could not load calibration image from {filepath}")
+            messagebox.showerror("错误", f"无法从 {filepath} 加载标定图像")
             print(f"Debug: cv2.imread failed for {filepath}")
             return
         print(f"Debug: cv2.imread successful. Image shape: {img.shape}")
         self.image_calib_path = filepath
         self.image_calib_cv2 = img # Store the original cv2 image
 
-        # Display the image on the canvas, scaled to fit
+        # Display the image on the canvas, scaled to fit and centered
         self.display_image_on_canvas(self.image_calib_cv2)
 
-        print(f"Calibration image loaded: {self.image_calib_path}")
-        self.point_label.config(text="Image loaded. Now load JSON.")
+        # Get image resolution and update the window title
+        if self.image_calib_cv2 is not None:
+            height, width = self.image_calib_cv2.shape[:2]
+            self.root.title(f"Homography Calibrator - {os.path.basename(filepath)} ({width}x{height})")
+        else:
+            self.root.title("Homography Calibrator from Label Studio JSON") # Reset title if image loading failed
+
+
+        print(f"标定图像已加载: {self.image_calib_path}")
+        self.point_label.config(text="图像已加载。现在加载 JSON。")
         self.load_calib_json_button.config(state=tk.NORMAL)
+        # self.load_world_coords_button.config(state=tk.DISABLED) # Ensure this is disabled until JSON is loaded
+
 
         self.homography_text.config(state=tk.NORMAL)
         self.homography_text.delete(1.0, tk.END)
-        self.homography_text.insert(tk.END, f"Image loaded: {os.path.basename(self.image_calib_path)}\nLoad JSON next.")
+        self.homography_text.insert(tk.END, f"图像已加载: {os.path.basename(self.image_calib_path)}\n下一步加载 JSON。")
         self.homography_text.config(state=tk.DISABLED)
 
 
     def load_calib_json(self):
         if self.image_calib_cv2 is None:
-            messagebox.showwarning("Load Image First", "Please load the calibration image before loading the JSON file.")
+            messagebox.showwarning("请先加载图像", "请先加载标定图像文件，然后加载 JSON 文件。")
             return
         filepath = filedialog.askopenfilename(
-            title="Select Label Studio JSON File for Calibration",
+            title="选择 Label Studio 标定 JSON 文件",
             filetypes=(("JSON files", "*.json"), ("All files", "*.*"))
         )
         if not filepath:
@@ -620,22 +723,22 @@ class HomographyCalibratorApp:
 
             # Basic validation of Label Studio export format
             if not export_data or not isinstance(export_data, list) or not export_data[0] or 'annotations' not in export_data[0] or not export_data[0]['annotations']:
-                messagebox.showerror("Error", "Invalid or unexpected Label Studio JSON format.")
+                messagebox.showerror("错误", "无效或意外的 Label Studio JSON 格式。")
                 self.reset_calibration_json_data()
                 return
 
             task_data = export_data[0]
             annotations = task_data.get('annotations', [])
             if not annotations:
-                messagebox.showerror("Error", "No annotations found in the JSON.")
+                messagebox.showerror("错误", "JSON 中未找到标注。")
                 self.reset_calibration_json_data()
                 return
 
             results = annotations[0].get('result', [])
             if not results:
-                messagebox.showwarning("No Annotation Results", "No annotation results found in the JSON.")
+                messagebox.showwarning("未找到标注结果", "JSON 中未找到标注结果。")
                 self.reset_calibration_json_data()
-                self.point_label.config(text="JSON loaded, but no points found.")
+                self.point_label.config(text="JSON 已加载，但未找到点。")
                 return
 
             # Find original image dimensions from JSON for scaling calculation
@@ -651,44 +754,33 @@ class HomographyCalibratorApp:
 
             # Handle cases where original_width/height might be missing in JSON
             if original_width_json is None or original_height_json is None:
-                messagebox.showwarning("Missing Dimensions in JSON", "Could not find original_width/height in JSON results.\nUsing loaded image dimensions for point scaling.")
+                messagebox.showwarning("JSON 中缺少尺寸信息", "在 JSON 结果中找不到 original_width/height。\n将使用加载的图像尺寸进行点缩放。")
                 effective_original_width = img_orig_width
                 effective_original_height = img_orig_height
             else:
                 # Check for dimension mismatch between JSON and loaded image
                 if int(original_width_json) != img_orig_width or int(original_height_json) != img_orig_height:
                     response = messagebox.askyesno(
-                        "Dimension Mismatch",
-                        f"JSON dimensions ({original_width_json}x{original_height_json}) "
-                        f"do not match the loaded image dimensions ({img_orig_width}x{img_orig_height}).\n"
-                        "Point coordinates from JSON might be incorrect for this image.\n"
-                        "Do you want to load the points anyway?"
+                        "尺寸不匹配",
+                        f"JSON 尺寸 ({original_width_json}x{original_height_json}) "
+                        f"与加载的图像尺寸 ({img_orig_width}x{img_orig_height}) 不匹配。\n"
+                        "来自 JSON 的点坐标可能对该图像不正确。\n"
+                        "您确定要加载这些点吗？"
                     )
                     if not response:
                         self.reset_calibration_json_data()
                         return
-                    print("Warning: Dimension mismatch acknowledged. Proceeding with point loading based on loaded image dimensions.")
+                    print("警告: 尺寸不匹配已确认。将基于加载的图像尺寸继续加载点。")
                     effective_original_width = img_orig_width
                     effective_original_height = img_orig_height
                 else:
                     effective_original_width = original_width_json
                     effective_original_height = original_height_json
 
-            print(f"Debug: Effective Original Dimensions (used for scaling from JSON %): {effective_original_width}x{effective_original_height}")
+            # print(f"Debug: Effective Original Dimensions (used for scaling from JSON %): {effective_original_width}x{effective_original_height}") # Uncomment for debug
 
 
             self.points_calib_data = []
-            # Get current canvas dimensions for scaling to displayed size
-            canvas_width = self.canvas.winfo_width()
-            canvas_height = self.canvas.winfo_height()
-
-            if canvas_width <= 1 or canvas_height <= 1:
-                 messagebox.showwarning("Display Size Error", f"Canvas size is incorrect: {canvas_width}x{canvas_height}. Points might be misplaced.")
-                 print(f"Debug: Canvas size is incorrect: {canvas_width}x{canvas_height}. Proceeding with point loading.")
-                 # Decide if you want to stop here or proceed with potentially wrong scaling
-                 # For now, let's proceed but the point display might be wrong until canvas is valid size
-                 pass
-
 
             # Process keypoint annotations
             for res in results:
@@ -698,69 +790,59 @@ class HomographyCalibratorApp:
                     # Get the label, default to empty string if not present or list is empty
                     label = res['value'].get('keypointlabels', [''])
                     label = label[0] if isinstance(label, list) and label else ''
-                    label = label or f'Point {len(self.points_calib_data) + 1}' # Generate default label if empty
+                    # Generate a default label if it's still empty or None
+                    if not label:
+                        label = f'Point {len(self.points_calib_data) + 1}'
 
-                    # Scale points from original JSON dimensions to the original image dimensions
+
+                    # Calculate pixel coordinates relative to the *original* image size
                     if effective_original_width > 0 and effective_original_height > 0:
                          pixel_x_orig = (x_percent / 100.0) * effective_original_width
                          pixel_y_orig = (y_percent / 100.0) * effective_original_height
                     else:
-                         print("Warning: Effective original dimensions are zero during point scaling from JSON %!")
-                         # Fallback to scaling based on actual image original size
+                         print("警告: 从 JSON 的 % 缩放点时，有效的原始尺寸为零！")
+                         # Fallback to scaling based on actual image original size (less accurate if JSON dimensions were different)
                          pixel_x_orig = (x_percent / 100.0) * img_orig_width
                          pixel_y_orig = (y_percent / 100.0) * img_orig_height
 
 
-                    # Now scale the original image pixel coordinates to the currently displayed canvas size
-                    # We need the scale factor used when displaying the calibration image
-                    # A more robust way is to store the scaling factor or recalculate it here
-                    # Recalculating based on current canvas and original image size:
-                    if img_orig_width > 0 and img_orig_height > 0 and canvas_width > 0 and canvas_height > 0:
-                         scale_w = canvas_width / img_orig_width
-                         scale_h = canvas_height / img_orig_height
-                         scale = min(scale_w, scale_h) # Use the same logic as display_image_on_canvas
-
-                         pixel_x_display = pixel_x_orig * scale
-                         pixel_y_display = pixel_y_orig * scale
-                    else:
-                         print("Warning: Original image or canvas dimensions are zero during point scaling to display!")
-                         # Fallback to direct scaling from JSON percentage to canvas size (less accurate if aspect ratios differ)
-                         pixel_x_display = (x_percent / 100.0) * canvas_width
-                         pixel_y_display = (y_percent / 100.0) * canvas_height
-
-
                     self.points_calib_data.append({
                         'label': label,
-                        'pixel': (pixel_x_display, pixel_y_display),
-                        'flat': None, # Real-world coordinates
-                        'tk_id': None # Tkinter canvas ID for the point marker
+                        'pixel_orig': (pixel_x_orig, pixel_y_orig), # Store original pixel coordinates
+                        'flat': None, # Real-world coordinates (initially None)
+                        'tk_id': None, # Tkinter canvas ID for the point marker
+                        'pixel_display': None # Will be calculated when drawing
                     })
 
             if not self.points_calib_data:
-                messagebox.showwarning("No Keypoints", "No keypoint annotations found in the result.")
+                messagebox.showwarning("未找到关键点", "在结果中未找到关键点标注。")
                 self.reset_calibration_json_data() # Clear JSON data if no points found
-                self.point_label.config(text="JSON loaded, but no points found.")
+                self.point_label.config(text="JSON 已加载，但未找到点。")
                 return
 
-            print(f"Loaded {len(self.points_calib_data)} keypoints from JSON.")
-            # Draw the loaded points on the canvas. This will use the calculated display pixel coordinates.
+            print(f"已从 JSON 加载 {len(self.points_calib_data)} 个关键点。")
+            # Draw the loaded points on the canvas. This will now use the pixel_orig and calculate display coords.
             self.draw_points()
             self.enable_calibration_controls() # Enable relevant controls
-            self.point_label.config(text="JSON loaded. Click points to input coordinates.")
+            self.point_label.config(text="JSON 已加载。点击点以输入坐标。")
 
             self.homography_text.config(state=tk.NORMAL)
             self.homography_text.delete(1.0, tk.END)
-            self.homography_text.insert(tk.END, f"JSON loaded: {os.path.basename(filepath)}\n{len(self.points_calib_data)} points found.\nClick points to enter flat coordinates.")
+            self.homography_text.insert(tk.END, f"JSON 已加载: {os.path.basename(filepath)}\n找到 {len(self.points_calib_data)} 个点。\n点击点以输入平面坐标或导入世界坐标。")
             self.homography_text.config(state=tk.DISABLED)
 
+            # Enable the Load World Coords button after points are loaded
+            self.load_world_coords_button.config(state=tk.NORMAL)
+
+
         except FileNotFoundError:
-            messagebox.showerror("Error", f"JSON file not found at {filepath}")
+            messagebox.showerror("错误", f"未找到 JSON 文件: {filepath}")
             self.reset_calibration_json_data()
         except json.JSONDecodeError:
-            messagebox.showerror("Error", f"Invalid JSON format in {filepath}")
+            messagebox.showerror("格式错误", f"JSON 文件格式无效: {filepath}")
             self.reset_calibration_json_data()
         except Exception as e:
-            messagebox.showerror("An error occurred", str(e))
+            messagebox.showerror("发生错误", str(e))
             import traceback
             traceback.print_exc() # Print traceback for debugging
             self.reset_calibration_json_data()
@@ -769,26 +851,28 @@ class HomographyCalibratorApp:
     def reset_calibration_data_and_display(self):
         """Resets all calibration related data and clears the canvas."""
         # Stop preview first if it's running
-        self.stop_preview()
-        self.canvas.delete("all") # Clear the canvas
+        self.stop_preview() # This also clears the canvas and points
+
+        # Clear calibration specific data
         self.image_calib_cv2 = None
-        self.image_calib_tk = None # Clear tk image
-        self.current_photo_tk = None # Clear captured photo tk image
+        self.image_calib_tk = None
         self.image_calib_path = None
-        # self.calib_display_width = 0 # No longer needed
-        # self.calib_display_height = 0 # No longer needed
-        self.points_calib_data = []
+        self.points_calib_data = [] # Reset the point data
         self.active_point_index = -1
         self.disable_calibration_controls()
-        self.point_label.config(text="Load calibration image first.")
+        self.point_label.config(text="加载标定图像文件。")
         self.load_calib_json_button.config(state=tk.DISABLED)
+        self.load_world_coords_button.config(state=tk.DISABLED) # Disable Load World Coords button
         self.homography_text.config(state=tk.NORMAL)
         self.homography_text.delete(1.0, tk.END)
-        self.homography_text.insert(tk.END, "Load calibration image first.")
+        self.homography_text.insert(tk.END, "加载标定图像文件。")
         self.homography_text.config(state=tk.DISABLED)
         self.homography_matrix = None
         self.clear_verification_display()
         self.verify_button.config(state=tk.DISABLED)
+
+        # Reset window title
+        self.root.title("Homography Calibrator from Label Studio JSON")
 
 
     def reset_calibration_json_data(self):
@@ -796,14 +880,15 @@ class HomographyCalibratorApp:
         self.canvas.delete("point_marker")
         self.canvas.delete("point_label_text")
         self.canvas.delete("point_label_outline")
-        self.points_calib_data = []
+        self.points_calib_data = [] # Reset the point data
         self.active_point_index = -1
         # Keep image loaded state, but disable JSON-dependent controls
         self.disable_calibration_controls() # This might need adjustment if you want to keep some controls enabled after image load
-        self.point_label.config(text="JSON data cleared. Load JSON again.")
+        self.point_label.config(text="JSON 数据已清除。请再次加载 JSON。")
+        self.load_world_coords_button.config(state=tk.DISABLED) # Disable Load World Coords button
         self.homography_text.config(state=tk.NORMAL)
         self.homography_text.delete(1.0, tk.END)
-        self.homography_text.insert(tk.END, "JSON data cleared.\nLoad JSON again.")
+        self.homography_text.insert(tk.END, "JSON 数据已清除。\n请再次加载 JSON。")
         self.homography_text.config(state=tk.DISABLED)
         self.homography_matrix = None
         self.clear_verification_display()
@@ -812,9 +897,9 @@ class HomographyCalibratorApp:
 
     def draw_points(self):
         """Draws or updates point markers and labels on the canvas."""
-        # Ensure canvas is not empty and calibration image is loaded before drawing points
-        if self.image_calib_tk is None or not self.points_calib_data or self.is_previewing:
-            # Clear any existing points if image is not loaded, no points, or in preview mode
+        # Ensure calibration image is loaded and there are points to draw, and not in preview mode
+        if self.image_calib_cv2 is None or not self.points_calib_data or self.is_previewing:
+            # Clear any existing points if conditions are not met
             self.canvas.delete("point_marker")
             self.canvas.delete("point_label_text")
             self.canvas.delete("point_label_outline")
@@ -825,66 +910,38 @@ class HomographyCalibratorApp:
         self.canvas.delete("point_label_text")
         self.canvas.delete("point_label_outline")
 
-        # Get the current canvas dimensions to scale the point coordinates
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
+        # Get the scaling and offset needed to map original image coordinates to canvas display coordinates
+        display_scale, offset_x, offset_y = self.get_display_scale_and_offset()
 
-        # Get the dimensions of the *original* calibration image
-        if self.image_calib_cv2 is None:
-             print("Warning: Original calibration image not available for point scaling during drawing.")
+        if display_scale <= 1e-8: # Avoid division by near zero or invalid scale
+             print("警告: 显示比例为零或无效，无法正确绘制点。")
              return
-
-        img_orig_height, img_orig_width = self.image_calib_cv2.shape[:2]
-        if img_orig_width <= 1 or img_orig_height <= 1:
-             print("Warning: Original calibration image has invalid dimensions for point scaling.")
-             return
-
-        # Calculate the scale factor used when the calibration image was last displayed
-        # This assumes display_image_on_canvas was the last function to draw the image
-        scale_w = canvas_width / img_orig_width
-        scale_h = canvas_height / img_orig_height
-        display_scale = min(scale_w, scale_h)
-
-        # Need to find the offset if the image is centered on the canvas
-        scaled_img_width = int(img_orig_width * display_scale)
-        scaled_img_height = int(img_orig_height * display_scale)
-        offset_x = (canvas_width - scaled_img_width) // 2
-        offset_y = (canvas_height - scaled_img_height) // 2
 
 
         for i, point_data in enumerate(self.points_calib_data):
-            # Ensure original pixel coordinates are numbers before drawing
-            # Assuming the pixel coordinates in self.points_calib_data are relative to the *original* image
-            # This requires revisiting where points are stored. If they are relative to the *displayed* image,
-            # then the scaling logic here needs adjustment.
-            # Let's assume point_data['pixel'] stores coordinates relative to the *original* image size.
-            # This makes sense for saving/loading JSON relative to the original image.
-
-            # HOWEVER, the load_calib_json currently scales points to the *display* size when loading.
-            # This means point_data['pixel'] is already relative to the canvas when loaded.
-            # This is simpler for drawing but complex for homography calculation.
-            # Let's adjust load_calib_json to store original pixel coordinates and calculate display coords here.
-
-            # * Correction: Based on the provided code, points_calib_data['pixel'] *is* being stored
-            # relative to the *displayed* image size during load_calib_json.
-            # So, the drawing should use these stored display pixel coordinates directly.
-
-            if not isinstance(point_data['pixel'], (tuple, list)) or len(point_data['pixel']) != 2:
-                 print(f"Warning: Invalid pixel coordinate format for point {point_data.get('label', i)}: {point_data['pixel']}")
+            # Use the original pixel coordinates for calculation
+            if 'pixel_orig' not in point_data or not isinstance(point_data['pixel_orig'], (tuple, list)) or len(point_data['pixel_orig']) != 2:
+                 print(f"警告: 点 {point_data.get('label', i)} 的原始像素坐标格式无效。")
                  continue # Skip drawing this point
 
-            # Use the stored pixel coordinates which are relative to the displayed image size
-            x_float, y_float = point_data['pixel']
+            x_orig, y_orig = point_data['pixel_orig']
             label = point_data['label']
 
+            # Calculate the display coordinates on the canvas
+            x_display = x_orig * display_scale + offset_x
+            y_display = y_orig * display_scale + offset_y
+
+            # Store the calculated display coordinates
+            point_data['pixel_display'] = (x_display, y_display)
+
             # Determine color based on whether flat coordinates are set
-            color = "red" if point_data['flat'] is None else "blue"
+            color = "red" if point_data.get('flat') is None else "blue" # Use .get for safety
 
             # Determine outline color based on active point
             outline_color = "yellow" if i == self.active_point_index else "black"
 
             # Ensure coordinates are integers for canvas drawing
-            x_int, y_int = int(round(x_float)), int(round(y_float))
+            x_int, y_int = int(round(x_display)), int(round(y_display))
 
             # Draw the point marker (oval)
             point_data['tk_id'] = self.canvas.create_oval(
@@ -912,8 +969,8 @@ class HomographyCalibratorApp:
 
     def on_canvas_click(self, event):
         """Handles click events on the canvas to select a point."""
-        # Ignore clicks if calibration image is not loaded or no points exist
-        if self.image_calib_tk is None or not self.points_calib_data or self.is_previewing:
+        # Ignore clicks if calibration image is not loaded or no points exist, or in preview mode
+        if self.image_calib_cv2 is None or not self.points_calib_data or self.is_previewing:
             return
 
         click_x, click_y = event.x, event.y
@@ -923,15 +980,14 @@ class HomographyCalibratorApp:
 
         # Find the closest point to the click coordinates within the tolerance
         for i, point_data in enumerate(self.points_calib_data):
-             # Ensure pixel coordinates are valid and are relative to the *displayed* image on the canvas
-             if not isinstance(point_data['pixel'], (tuple, list)) or len(point_data['pixel']) != 2:
+             # Use the calculated display coordinates for click detection
+             if 'pixel_display' not in point_data or not isinstance(point_data['pixel_display'], (tuple, list)) or len(point_data['pixel_display']) != 2:
                   continue # Skip invalid points
 
-             # Point coordinates are already stored relative to the displayed image size by load_calib_json
-             px_float, py_float = point_data['pixel']
+             px_display, py_display = point_data['pixel_display']
 
-             # Calculate distance from the click point to the point marker's center
-             dist = np.sqrt((click_x - px_float)**2 + (click_y - py_float)**2)
+             # Calculate distance from the click point to the point marker's center on the canvas
+             dist = np.sqrt((click_x - px_display)**2 + (click_y - py_display)**2)
 
              if dist < tolerance and dist < min_dist:
                 min_dist = dist
@@ -952,6 +1008,8 @@ class HomographyCalibratorApp:
             # Check if image is loaded to enable load json button
             if self.image_calib_cv2 is not None:
                  self.load_calib_json_button.config(state=tk.NORMAL)
+            # Ensure Load World Coords button is also handled if JSON points are cleared
+            self.load_world_coords_button.config(state=tk.DISABLED)
             return
 
         # If the clicked index is the same as the current active index, do nothing
@@ -971,7 +1029,26 @@ class HomographyCalibratorApp:
         # Update the controls and label based on the new active point
         if index != -1:
             point_data = self.points_calib_data[index]
-            self.point_label.config(text=f"Editing: {point_data['label']} (Pixel: {point_data['pixel'][0]:.2f}, {point_data['pixel'][1]:.2f})")
+
+            # Display pixel and world coordinates in the point label
+            pixel_orig_str = f"原始像素: ({point_data['pixel_orig'][0]:.2f}, {point_data['pixel_orig'][1]:.2f})" if 'pixel_orig' in point_data and point_data['pixel_orig'] is not None else "原始像素: N/A"
+            # Check if 'flat' exists and is not None before formatting
+            if point_data.get('flat') is not None:
+                 world_coord_str = f"世界坐标: ({point_data['flat'][0]:.2f}, {point_data['flat'][1]:.2f})"
+                 # Populate the flat coordinate entries
+                 self.flat_x_entry.delete(0, tk.END)
+                 self.flat_x_entry.insert(0, str(point_data['flat'][0]))
+                 self.flat_y_entry.delete(0, tk.END)
+                 self.flat_y_entry.insert(0, str(point_data['flat'][1]))
+            else:
+                 world_coord_str = "世界坐标: 未设置"
+                 # Clear the entry fields
+                 self.flat_x_entry.delete(0, tk.END)
+                 self.flat_y_entry.delete(0, tk.END)
+
+
+            self.point_label.config(text=f"编辑点: {point_data['label']} | {pixel_orig_str} | {world_coord_str}")
+
 
             # Enable flat coordinate entries and save/delete buttons
             self.flat_x_entry.config(state=tk.NORMAL)
@@ -979,26 +1056,20 @@ class HomographyCalibratorApp:
             self.save_button.config(state=tk.NORMAL)
             self.delete_button.config(state=tk.NORMAL)
 
-            # Populate the flat coordinate entries if they exist for this point
-            if point_data['flat'] is not None:
-                self.flat_x_entry.delete(0, tk.END)
-                self.flat_x_entry.insert(0, str(point_data['flat'][0]))
-                self.flat_y_entry.delete(0, tk.END)
-                self.flat_y_entry.insert(0, str(point_data['flat'][1]))
-            else:
-                self.flat_x_entry.delete(0, tk.END)
-                self.flat_y_entry.delete(0, tk.END)
 
             # Update the outline color of the newly active point
             if point_data['tk_id'] is not None and self.canvas.find_withtag(point_data['tk_id']):
                 self.canvas.itemconfig(point_data['tk_id'], outline="yellow")
         else:
             # If no point is active, reset the label and disable controls
-            self.point_label.config(text="Click a point to edit")
+            self.point_label.config(text="点击点进行编辑")
             self.flat_x_entry.config(state=tk.DISABLED)
             self.flat_y_entry.config(state=tk.DISABLED)
             self.save_button.config(state=tk.DISABLED)
             self.delete_button.config(state=tk.DISABLED)
+            self.flat_x_entry.delete(0, tk.END) # Clear entries when no point is selected
+            self.flat_y_entry.delete(0, tk.END) # Clear entries when no point is selected
+
 
         # Check if enough points have flat coordinates to enable the calculate button
         self.check_calculate_button_state()
@@ -1007,7 +1078,8 @@ class HomographyCalibratorApp:
     def save_coordinates(self):
         """Saves the entered real-world coordinates for the active point."""
         # Ensure there is an active point and calibration data exists
-        if self.active_point_index == -1 or not self.points_calib_data:
+        if self.active_point_index == -1 or not self.points_calib_data or self.active_point_index >= len(self.points_calib_data):
+            print("错误: 没有有效的活动点尝试保存。")
             return
 
         try:
@@ -1017,19 +1089,21 @@ class HomographyCalibratorApp:
 
             # Store the flat coordinates in the active point's data
             self.points_calib_data[self.active_point_index]['flat'] = (x_flat, y_flat)
-            print(f"Saved flat coordinates ({x_flat}, {y_flat}) for {self.points_calib_data[self.active_point_index]['label']}")
+            point_label = self.points_calib_data[self.active_point_index]['label']
+            print(f"已为点 '{point_label}' 手动保存世界坐标: ({x_flat}, {y_flat})")
 
             # Redraw points to update the color of the saved point
             self.draw_points()
 
-            # Keep the same point active after saving
-            # self.set_active_point(self.active_point_index)
-            # Or you might want to clear the selection: self.set_active_point(-1)
-            # For now, keep active to allow quick editing
-            pass
+            # Update the point label to show the saved coordinates
+            self.set_active_point(self.active_point_index)
+
 
         except ValueError:
-            messagebox.showwarning("Invalid Input", "Please enter valid numerical values for X and Y.")
+            messagebox.showwarning("无效输入", "请输入有效的数字作为 X 和 Y 值。")
+        except IndexError:
+             print(f"错误: 活动点索引 {self.active_point_index} 超出了 points_calib_data 的范围。")
+             self.set_active_point(-1) # Reset active point
 
         # Check if enough points have flat coordinates to enable the calculate button
         self.check_calculate_button_state()
@@ -1038,26 +1112,33 @@ class HomographyCalibratorApp:
     def delete_coordinates(self):
         """Deletes the real-world coordinates for the active point."""
         # Ensure there is an active point and calibration data exists
-        if self.active_point_index == -1 or not self.points_calib_data:
+        if self.active_point_index == -1 or not self.points_calib_data or self.active_point_index >= len(self.points_calib_data):
+            print("错误: 没有有效的活动点尝试删除。")
             return
 
-        point_label = self.points_calib_data[self.active_point_index]['label']
+        try:
+            point_label = self.points_calib_data[self.active_point_index]['label']
 
-        # Ask for confirmation before deleting
-        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete coordinates for {point_label}?"):
-            # Set the flat coordinates to None
-            self.points_calib_data[self.active_point_index]['flat'] = None
-            print(f"Deleted flat coordinates for {point_label}")
+            # Ask for confirmation before deleting
+            if messagebox.askyesno("确认删除", f"确定要删除点 '{point_label}' 的坐标吗？"):
+                # Set the flat coordinates to None
+                self.points_calib_data[self.active_point_index]['flat'] = None
+                print(f"已删除点 '{point_label}' 的世界坐标。")
 
-            # Clear the entry fields
-            self.flat_x_entry.delete(0, tk.END)
-            self.flat_y_entry.delete(0, tk.END)
+                # Clear the entry fields
+                self.flat_x_entry.delete(0, tk.END)
+                self.flat_y_entry.delete(0, tk.END)
 
-            # Redraw points to update the color of the deleted point
-            self.draw_points()
+                # Redraw points to update the color of the deleted point
+                self.draw_points()
 
-            # Clear the active point selection
-            self.set_active_point(-1)
+                # Clear the active point selection
+                self.set_active_point(-1)
+
+        except IndexError:
+             print(f"错误: 删除期间活动点索引 {self.active_point_index} 超出了范围。")
+             self.set_active_point(-1) # Reset active point
+
 
         # Check if enough points have flat coordinates to enable the calculate button
         self.check_calculate_button_state()
@@ -1066,74 +1147,44 @@ class HomographyCalibratorApp:
     def check_calculate_button_state(self):
         """Checks if there are enough points with flat coordinates to enable the calculate button."""
         # Count points that have non-None flat coordinates
-        valid_points_count = sum(1 for p in self.points_calib_data if p['flat'] is not None)
+        valid_points_count = sum(1 for p in self.points_calib_data if p.get('flat') is not None) # Use .get for safety
+
 
         # Enable the calculate button if at least 4 points have flat coordinates
         if valid_points_count >= 4:
             self.calculate_button.config(state=tk.NORMAL)
             self.homography_text.config(state=tk.NORMAL)
             self.homography_text.delete(1.0, tk.END)
-            self.homography_text.insert(tk.END, f"Ready to calculate with {valid_points_count} points.")
+            self.homography_text.insert(tk.END, f"准备使用 {valid_points_count} 个点计算 Homography 矩阵。")
             self.homography_text.config(state=tk.DISABLED)
         else:
             self.calculate_button.config(state=tk.DISABLED)
             self.homography_text.config(state=tk.NORMAL)
             self.homography_text.delete(1.0, tk.END)
-            self.homography_text.insert(tk.END, f"Need at least 4 points with coordinates ({valid_points_count} currently).")
+            self.homography_text.insert(tk.END, f"需要至少 4 个点具有坐标 (当前 {valid_points_count} 个点)。")
             self.homography_text.config(state=tk.DISABLED)
 
-        # Also check if the export button should be enabled
-        self.export_button.config(state=tk.NORMAL if valid_points_count > 0 else tk.DISABLED)
+        # Also check if the export buttons should be enabled
+        export_enabled = valid_points_count > 0
+        # Original export is enabled if *any* points are loaded from JSON, regardless of flat coords
+        self.export_button.config(state=tk.NORMAL if self.points_calib_data else tk.DISABLED)
+        # New export is enabled if at least one point has flat coordinates
+        self.export_world_coords_button.config(state=tk.NORMAL if export_enabled else tk.DISABLED) # Enable new export button
+
         self.verify_button.config(state=tk.NORMAL if self.homography_matrix is not None else tk.DISABLED) # Verify needs matrix
 
 
-    def transform_pixel_to_world(self, pixel_x_display, pixel_y_display):
-        """Transforms a pixel coordinate from the *displayed* image on canvas to real-world coordinates."""
+    def transform_pixel_to_world(self, pixel_x_orig, pixel_y_orig):
+        """Transforms a pixel coordinate from the *original* image to real-world coordinates."""
         if self.homography_matrix is None:
-            print("Error: Homography matrix not available for transformation.")
-            return None
-        if self.image_calib_cv2 is None:
-            print("Error: Calibration image (original) not loaded for scaling.")
+            print("错误: Homography 矩阵不可用，无法进行转换。")
             return None
 
-        # Get original image dimensions from the loaded calibration image
-        orig_height, orig_width = self.image_calib_cv2.shape[:2]
-        if orig_width <= 0 or orig_height <= 0:
-            print("Error: Invalid original image dimensions for scaling.")
-            return None
+        # The homography matrix H was calculated using original image coordinates,
+        # so we use the original pixel coordinates directly here.
 
-        # Get the dimensions of the currently displayed image *on the canvas*
-        # Need to calculate the scale factor used during display_image_on_canvas
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-
-        if canvas_width <= 1 or canvas_height <= 1:
-            print("Error: Canvas has invalid dimensions for scaling.")
-            return None
-
-        scale_w = canvas_width / orig_width
-        scale_h = canvas_height / orig_height
-        display_scale = min(scale_w, scale_h)
-
-        # Need to account for the offset if the image is centered on the canvas
-        scaled_img_width = int(orig_width * display_scale)
-        scaled_img_height = int(orig_height * display_scale)
-        offset_x = (canvas_width - scaled_img_width) // 2
-        offset_y = (canvas_height - scaled_img_height) // 2
-
-        # Scale the pixel coordinates from the *displayed* size back to the *original* image size
-        # This is the inverse of the scaling done in display_image_on_canvas and load_calib_json
-        if display_scale > 1e-8: # Avoid division by near zero
-             scaled_pixel_x_orig = (pixel_x_display - offset_x) / display_scale
-             scaled_pixel_y_orig = (pixel_y_display - offset_y) / display_scale
-        else:
-             print("Warning: Display scale is near zero, cannot inverse scale pixel coordinates.")
-             return None
-
-
-        # Perform the homography transformation using the scaled original pixel coordinates
         H = self.homography_matrix
-        pixel_coord_homogeneous = np.array([[scaled_pixel_x_orig], [scaled_pixel_y_orig], [1.0]])
+        pixel_coord_homogeneous = np.array([[pixel_x_orig], [pixel_y_orig], [1.0]])
         transformed_homogeneous_coord = np.dot(H, pixel_coord_homogeneous)
 
         # Perform perspective division
@@ -1143,7 +1194,7 @@ class HomographyCalibratorApp:
 
         # Handle potential division by zero
         if abs(s) < 1e-8: # Use a small epsilon to check for near-zero
-            print(f"Warning: Perspective division by zero or near-zero for pixel ({pixel_x_display:.2f}, {pixel_y_display:.2f}). Result may be at infinity.")
+            print(f"警告: 原始像素 ({pixel_x_orig:.2f}, {pixel_y_orig:.2f}) 的透视除以零或接近零。结果可能在无穷远处。")
             return None
 
         world_X = sX / s
@@ -1156,65 +1207,43 @@ class HomographyCalibratorApp:
         """Calculates the homography matrix using the selected points."""
         src_pts = [] # Points in the image plane (pixel coordinates - original image size)
         dst_pts = [] # Points in the real-world plane (flat coordinates)
+        calculation_points_info = [] # To store info for printing
 
         if self.image_calib_cv2 is None:
-            messagebox.showwarning("Image Not Loaded", "Calibration image is not loaded.")
+            messagebox.showwarning("未加载图像", "未加载标定图像。")
             return
 
-        # Get the dimensions of the *original* calibration image
-        orig_height, orig_width = self.image_calib_cv2.shape[:2]
-        if orig_width <= 0 or orig_height <= 0:
-            messagebox.showerror("Image Error", "Invalid original image dimensions for homography calculation.")
-            return
-
-        # Get the dimensions of the currently displayed image on the canvas
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-
-        if canvas_width <= 1 or canvas_height <= 1:
-            messagebox.showerror("Display Error", "Canvas has invalid dimensions. Cannot scale pixel coordinates for homography.")
-            return
-
-
-        # Calculate the scale factor and offset used when the calibration image was last displayed
-        scale_w = canvas_width / orig_width
-        scale_h = canvas_height / orig_height
-        display_scale = min(scale_w, scale_h)
-
-        scaled_img_width = int(orig_width * display_scale)
-        scaled_img_height = int(orig_height * display_scale)
-        offset_x = (canvas_width - scaled_img_width) // 2
-        offset_y = (canvas_height - scaled_img_height) // 2
-
-
+        # Homography is calculated from original image coordinates to world coordinates
         for point_data in self.points_calib_data:
-            # Only use points that have both pixel and flat coordinates
-            if point_data['flat'] is not None and point_data['pixel'] is not None:
-                # point_data['pixel'] stores coordinates relative to the *displayed* image size.
-                # We need to scale them back to the *original* image size for homography calculation.
-                display_pixel_x, display_pixel_y = point_data['pixel']
+            # Only use points that have both original pixel and flat coordinates
+            if point_data.get('flat') is not None and point_data.get('pixel_orig') is not None:
+                 x_orig, y_orig = point_data['pixel_orig']
+                 flat_x, flat_y = point_data['flat']
+                 src_pts.append((x_orig, y_orig))
+                 dst_pts.append(point_data['flat'])
+                 calculation_points_info.append({
+                     'label': point_data['label'],
+                     'pixel_orig': (x_orig, y_orig),
+                     'flat': (flat_x, flat_y)
+                 })
 
-                if display_scale > 1e-8: # Avoid division by near zero
-                     scaled_pixel_x_orig = (display_pixel_x - offset_x) / display_scale
-                     scaled_pixel_y_orig = (display_pixel_y - offset_y) / display_scale
-                else:
-                     print("Warning: Display scale is near zero, cannot inverse scale pixel coordinates for homography.")
-                     continue # Skip this point
-
-
-                src_pts.append((scaled_pixel_x_orig, scaled_pixel_y_orig))
-                dst_pts.append(point_data['flat'])
 
         # Need at least 4 points to calculate a homography
         if len(src_pts) < 4:
-            messagebox.showwarning("Not Enough Points", "Need at least 4 corresponding points with both pixel and real-world coordinates to calculate homography.")
+            messagebox.showwarning("点不足", "需要至少 4 对具有像素和世界坐标的对应点才能计算 Homography 矩阵。")
             self.homography_matrix = None
             self.homography_text.config(state=tk.NORMAL)
             self.homography_text.delete(1.0, tk.END)
-            self.homography_text.insert(tk.END, "Need at least 4 points with coordinates.")
+            self.homography_text.insert(tk.END, "需要至少 4 个点具有坐标。")
             self.homography_text.config(state=tk.DISABLED)
             self.verify_button.config(state=tk.DISABLED)
             return
+
+        # Print the points used for calculation
+        print("\n用于计算 Homography 矩阵的点:")
+        for p_info in calculation_points_info:
+             print(f"  标签: {p_info['label']}, 原始像素: ({p_info['pixel_orig'][0]:.2f}, {p_info['pixel_orig'][1]:.2f}), 世界坐标: ({p_info['flat'][0]:.2f}, {p_info['flat'][1]:.2f})")
+
 
         # Convert lists to NumPy arrays for OpenCV
         src_pts = np.array(src_pts, dtype=np.float32)
@@ -1222,7 +1251,7 @@ class HomographyCalibratorApp:
 
         try:
             # Calculate the homography matrix using RANSAC for robustness
-            # RANSAC parameters: 5.0 is the maximum allowed reprojection error in pixels
+            # RANSAC parameters: 5.0 is the maximum allowed reprojection error in pixels (in the original image scale)
             H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
             # You can optionally check the 'mask' to see which points were considered inliers
 
@@ -1231,54 +1260,85 @@ class HomographyCalibratorApp:
             # Display the calculated homography matrix in the text area
             self.homography_text.config(state=tk.NORMAL)
             self.homography_text.delete(1.0, tk.END)
-            self.homography_text.insert(tk.END, "Calculated Homography Matrix (H):\n")
-            self.homography_text.insert(tk.END, str(H)) # Insert the numpy array string representation
+            self.homography_text.insert(tk.END, "计算出的 Homography 矩阵 (H):\n")
+            # Format the matrix display for better readability
+            matrix_str = np.array2string(H, precision=4, suppress_small=True, separator=', ')
+            self.homography_text.insert(tk.END, matrix_str)
             self.homography_text.config(state=tk.DISABLED)
 
-            print("\nCalculated Homography Matrix:")
+            print("\n计算出的 Homography 矩阵:")
             print(H)
 
             # Enable the verification button after successful calculation
             self.verify_button.config(state=tk.NORMAL)
 
+            # Redraw points and verification if they exist
+            self.draw_points()
+            self.verify_untransformed_points()
+
+
         except Exception as e:
             # Handle errors during calculation
-            messagebox.showerror("Calculation Error", f"Could not compute homography: {e}")
+            messagebox.showerror("计算错误", f"无法计算 Homography 矩阵: {e}")
             self.homography_matrix = None
             self.homography_text.config(state=tk.NORMAL)
             self.homography_text.delete(1.0, tk.END)
-            self.homography_text.insert(tk.END, f"Error during calculation: {e}")
+            self.homography_text.insert(tk.END, f"计算过程中发生错误: {e}")
             self.homography_text.config(state=tk.DISABLED)
             self.verify_button.config(state=tk.DISABLED)
 
 
     def export_coordinates_to_json(self):
-        """Exports the collected real-world coordinates to a JSON file."""
+        """Exports the loaded original pixel coordinates to a JSON file (Label Studio format)."""
         # Ensure there are points loaded
         if not self.points_calib_data:
-            messagebox.showwarning("No Data", "No calibration points loaded.")
+            messagebox.showwarning("无数据", "未从 JSON 加载标定点。")
             return
 
-        export_list = []
-        # Collect points that have real-world coordinates assigned
+        # Create a basic structure similar to Label Studio export, but simplified
+        # Note: This exports the original pixel points loaded from the input JSON,
+        # NOT the manually entered world coordinates.
+        export_data = []
+        task_result = []
+
+        # Get original dimensions from the loaded calibration image if available
+        original_width = self.image_calib_cv2.shape[1] if self.image_calib_cv2 is not None else None
+        original_height = self.image_calib_cv2.shape[0] if self.image_calib_cv2 is not None else None
+
+
         for point_data in self.points_calib_data:
-            if point_data['flat'] is not None:
-                export_list.append({
-                    "label": point_data['label'],
-                    "world_x": point_data['flat'][0],
-                    "world_y": point_data['flat'][1]
-                    # To export original pixel coords, you'd need to store them separately when loading JSON
-                    # For now, only exporting world coordinates as they are saved.
-                })
+             # Calculate percentage based on original dimensions if available
+             # Ensure division by zero is handled
+             x_percent = (point_data['pixel_orig'][0] / original_width) * 100 if original_width and original_width > 0 else 0
+             y_percent = (point_data['pixel_orig'][1] / original_height) * 100 if original_height and original_height > 0 else 0
 
-        # If no points have world coordinates, warn the user
-        if not export_list:
-            messagebox.showwarning("No Data", "No real-world coordinates have been entered yet.")
-            return
+
+             result_item = {
+                "type": "keypointlabels",
+                "value": {
+                    "x": x_percent,
+                    "y": y_percent,
+                    "keypointlabels": [point_data.get('label', 'Unnamed Point')]
+                },
+                # Add original dimensions if known
+                "original_width": original_width,
+                "original_height": original_height,
+                # You might add 'from_name', 'to_name', 'source', etc. if needed for full LS format
+            }
+             task_result.append(result_item)
+
+        # Wrap the results in a task structure (simplified)
+        task = {
+            "annotations": [{"result": task_result}],
+            # Add other task-level info if needed (e.g., 'data', 'id')
+            # For this simple export, we just focus on the results
+        }
+        export_data.append(task)
+
 
         # Ask the user where to save the JSON file
         filepath = filedialog.asksaveasfilename(
-            title="Save World Coordinates JSON",
+            title="保存原始点 JSON (Label Studio 样式)",
             defaultextension=".json",
             filetypes=(("JSON files", "*.json"), ("All files", "*.*"))
         )
@@ -1287,66 +1347,137 @@ class HomographyCalibratorApp:
 
         try:
             # Write the data to the JSON file with indentation for readability
-            with open(filepath, 'w') as f:
-                json.dump(export_list, f, indent=4)
+            with open(filepath, 'w', encoding='utf-8') as f: # Added encoding for broader compatibility
+                json.dump(export_data, f, indent=4, ensure_ascii=False) # ensure_ascii=False for non-ASCII chars in labels
 
-            messagebox.showinfo("Export Successful", f"Real-world coordinates exported to:\n{filepath}")
-            print(f"Real-world coordinates exported to {filepath}")
+            messagebox.showinfo("导出成功", f"原始点已导出到:\n{filepath}")
+            print(f"原始点已导出到 {filepath}")
 
         except Exception as e:
             # Handle errors during file saving
-            messagebox.showerror("Export Error", f"Error saving file: {e}")
+            messagebox.showerror("导出错误", f"保存文件时发生错误: {e}")
+            print(f"Error saving original points to {filepath}: {e}")
+
+
+    def export_world_coordinates_to_json(self):
+        """Exports the manually entered real-world coordinates to a JSON file."""
+        # Ensure there are points loaded
+        if not self.points_calib_data:
+            messagebox.showwarning("无数据", "未加载标定点。")
+            return
+
+        export_list = []
+        # Collect points that have real-world coordinates assigned
+        for point_data in self.points_calib_data:
+            if point_data.get('flat') is not None: # Use .get for safety
+                export_item = {
+                    "label": point_data.get('label', 'Unnamed Point'), # Use .get with default
+                    "world_x": point_data['flat'][0],
+                    "world_y": point_data['flat'][1]
+                }
+                # Optionally add original pixel coordinates if stored
+                if point_data.get('pixel_orig') is not None:
+                     export_item["pixel_x_orig"] = point_data['pixel_orig'][0]
+                     export_item["pixel_y_orig"] = point_data['pixel_orig'][1]
+
+                export_list.append(export_item)
+
+
+        # If no points have world coordinates, warn the user
+        if not export_list:
+            messagebox.showwarning("无数据", "尚未为任何点输入世界坐标。")
+            return
+
+        # Ask the user where to save the JSON file
+        filepath = filedialog.asksaveasfilename(
+            title="保存世界坐标 JSON",
+            defaultextension=".json",
+            filetypes=(("JSON files", "*.json"), ("All files", "*.*"))
+        )
+        if not filepath:
+            return # User cancelled the save dialog
+
+        try:
+            # Write the data to the JSON file with indentation for readability
+            with open(filepath, 'w', encoding='utf-8') as f: # Added encoding for broader compatibility
+                json.dump(export_list, f, indent=4, ensure_ascii=False) # ensure_ascii=False for non-ASCII chars in labels
+
+            messagebox.showinfo("导出成功", f"世界坐标已导出到:\n{filepath}")
+            print(f"世界坐标已导出到 {filepath}")
+
+        except Exception as e:
+            # Handle errors during file saving
+            messagebox.showerror("导出错误", f"保存文件时发生错误: {e}")
             print(f"Error saving coordinates to {filepath}: {e}")
 
 
     def verify_untransformed_points(self):
         """Transforms pixel coordinates of points without flat coordinates and displays the results."""
-        # Ensure homography matrix is available
+        # Ensure homography matrix is available and calibration image is loaded
         if self.homography_matrix is None:
-            messagebox.showwarning("No Matrix", "Homography matrix has not been calculated yet.")
+            # messagebox.showwarning("无矩阵", "尚未计算 Homography 矩阵。") # Avoid excessive popups
+            self.clear_verification_display() # Clear any old markers
+            self.verify_button.config(state=tk.DISABLED)
             return
+
+        if self.image_calib_cv2 is None:
+             print("警告: 未加载标定图像，无法显示验证标记。")
+             self.clear_verification_display()
+             return
+
 
         # Clear previous verification markers
         self.clear_verification_display()
 
         points_to_verify = []
-        # Identify points that do *not* have flat coordinates but have pixel coordinates
+        # Identify points that do *not* have flat coordinates but have original pixel coordinates
         for point_data in self.points_calib_data:
-            if point_data['flat'] is None and point_data['pixel'] is not None:
+            if point_data.get('flat') is None and point_data.get('pixel_orig') is not None:
                 points_to_verify.append(point_data)
 
         if not points_to_verify:
-            messagebox.showinfo("No Points to Verify", "All loaded points already have entered real-world coordinates or invalid pixel data.")
+            # messagebox.showinfo("无点可验证", "所有加载的点都已输入世界坐标或无效的像素数据。") # Avoid excessive popups
+            self.clear_verification_display() # Ensure cleared if no points
             return
 
-        print("\nVerifying untransformed points...")
+        print("\n正在验证未转换的点...")
         points_verified_count = 0
 
+        # Get the scaling and offset for the current canvas display
+        display_scale, offset_x, offset_y = self.get_display_scale_and_offset()
+
+        if display_scale <= 1e-8:
+             print("警告: 显示比例为零或无效，无法显示验证标记。")
+             return
+
+
         for point_data in points_to_verify:
-            # Use the pixel coordinates that are relative to the *displayed* image on the canvas
-            pixel_x_display, pixel_y_display = point_data['pixel']
+            # Use the original pixel coordinates for transformation
+            x_orig, y_orig = point_data['pixel_orig']
             label = point_data['label']
 
-            # Transform the pixel coordinate to a world coordinate using the homography matrix
-            # This method now handles scaling from display coordinates back to original image coordinates
-            world_coord = self.transform_pixel_to_world(pixel_x_display, pixel_y_display)
+            # Transform the original pixel coordinate to a world coordinate
+            world_coord = self.transform_pixel_to_world(x_orig, y_orig)
 
             if world_coord:
                 world_x, world_y = world_coord
-                print(f"  {label} (Pixel Display: {pixel_x_display:.2f}, {pixel_y_display:.2f}) -> World: ({world_x:.2f}, {world_y:.2f})")
+                print(f"  '{label}' (原始像素: {x_orig:.2f}, {y_orig:.2f}) -> 世界坐标 (计算值): ({world_x:.2f}, {world_y:.2f})")
 
-                # Draw a marker and text on the canvas for the transformed point
-                # Use the pixel coordinates on the displayed image
-                x_int, y_int = int(round(pixel_x_display)), int(round(pixel_y_display))
+                # Calculate the display coordinates on the canvas for drawing the verification marker
+                x_display = x_orig * display_scale + offset_x
+                y_display = y_orig * display_scale + offset_y
 
-                # Draw a marker (e.g., a circle)
+
+                # Draw a marker (e.g., a circle) at the *displayed* pixel location
+                x_int, y_int = int(round(x_display)), int(round(y_display))
+
                 point_id = self.canvas.create_oval(
                     x_int - 7, y_int - 7, x_int + 7, y_int + 7,
                     outline="lime green", width=2, tags="verification_marker"
                 )
                 self.verification_tk_ids.append(point_id) # Store ID to clear later
 
-                # Draw the calculated world coordinates as text
+                # Draw the calculated world coordinates as text next to the marker
                 text_label = f"({world_x:.2f}, {world_y:.2f})"
                 text_id = self.canvas.create_text(
                     x_int + 15, y_int + 5, text=text_label, anchor=tk.NW, font=('Arial', 9, 'bold'),
@@ -1359,16 +1490,16 @@ class HomographyCalibratorApp:
         if self.verification_tk_ids:
             # Enable the clear verify button if any markers were drawn
             self.clear_verify_button.config(state=tk.NORMAL)
-            print(f"Displayed calculated coordinates for {points_verified_count} points.")
+            print(f"已为 {points_verified_count} 个点显示计算出的世界坐标。")
         else:
-            print("No world coordinates could be calculated for untransformed points.")
-            messagebox.showinfo("Verification", "Could not calculate world coordinates for any untransformed points.")
+            print("无法为任何未转换的点计算世界坐标。")
+            # messagebox.showinfo("验证", "无法为任何未转换的点计算世界坐标。") # Avoid excessive popups
 
 
     def clear_verification_display(self):
         """Clears the verification markers and text from the canvas."""
         if self.verification_tk_ids:
-            print("Clearing verification display.")
+            print("正在清除验证显示。")
             for item_id in self.verification_tk_ids:
                 # Check if the item still exists on the canvas before deleting
                 if self.canvas.find_withtag(item_id):
@@ -1383,11 +1514,13 @@ class HomographyCalibratorApp:
         # Calculate button is enabled based on number of points with flat coordinates.
         self.check_calculate_button_state() # This handles calculate and export buttons
 
-        # Export button is enabled if any point has flat coordinates (checked in check_calculate_button_state)
-        # self.export_button.config(state=tk.NORMAL) # Redundant
+        # The Load World Coords button should be enabled once points are loaded from the initial JSON
+        if self.points_calib_data:
+             self.load_world_coords_button.config(state=tk.NORMAL)
+        else:
+             self.load_world_coords_button.config(state=tk.DISABLED)
 
         # Verify button is enabled after homography is calculated (checked in check_calculate_button_state)
-        # self.verify_button.config(state=tk.NORMAL if self.homography_matrix is not None else tk.DISABLED) # Redundant
 
 
     def disable_calibration_controls(self):
@@ -1398,112 +1531,13 @@ class HomographyCalibratorApp:
         self.delete_button.config(state=tk.DISABLED)
         self.calculate_button.config(state=tk.DISABLED)
         self.export_button.config(state=tk.DISABLED)
+        self.export_world_coords_button.config(state=tk.DISABLED) # Disable new export button
         self.verify_button.config(state=tk.DISABLED)
         self.clear_verify_button.config(state=tk.DISABLED)
+        self.load_calib_json_button.config(state=tk.DISABLED) # Also disable load JSON button when resetting
 
 
-    def load_image_info(self):
-        """Loads an image and displays its basic information and EXIF data."""
-        filepath = filedialog.askopenfilename(
-            title="Select Image File for Info",
-            filetypes=(("Image files", "*.jpg *.jpeg *.png *.bmp *.tiff"), ("All files", "*.*"))
-        )
-        if not filepath:
-            return # User cancelled the dialog
-
-        try:
-            # Use PIL to open the image to easily get resolution and EXIF
-            self.image_info_pil = Image.open(filepath)
-            self.image_info_path = filepath
-
-            width, height = self.image_info_pil.size
-            resolution_info = f"Resolution: {width} x {height} pixels\n\n"
-
-            # Get EXIF data
-            exif_data = self.image_info_pil._getexif()
-
-            exif_info_string = "EXIF Data:\n"
-            if exif_data is not None:
-                # Create a dictionary mapping tag IDs to names
-                exif_tags_map = { tag_id: ExifTags.TAGS.get(tag_id, tag_id) for tag_id in exif_data.keys() }
-
-                for tag_id, value in exif_data.items():
-                    tag_name = exif_tags_map.get(tag_id, tag_id)
-
-                    # Try to decode bytes values
-                    if isinstance(value, bytes):
-                        try:
-                            value_str = value.decode('utf-8', errors='replace')
-                        except:
-                            value_str = str(value) # Fallback to string representation
-
-                    # Format tuple values, especially for rationals (like aperture, focal length)
-                    elif isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], (int,float)) and isinstance(value[1], (int,float)) and value[1] != 0:
-                        try:
-                            value_str = f"{value[0]}/{value[1]} ({value[0]/value[1]:.2f})"
-                        except:
-                            value_str = f"{value[0]}/{value[1]}" # Avoid division error
-
-                    # Handle numpy arrays if any (less common in standard EXIF)
-                    elif isinstance(value, np.ndarray):
-                        value_str = np.array2string(value, threshold=50, edgeitems=2) # Limit size for display
-
-                    else:
-                        value_str = str(value) # Default string representation
-
-                    # Skip GPSInfo as it can be large and complex to display directly
-                    if tag_name == 'GPSInfo':
-                         # You might want to parse GPSInfo separately if needed
-                         exif_info_string += f"  {tag_name}: {value}\n"
-                         continue # Skip adding individual tags within GPSInfo
-
-                    # Add other EXIF tags to the string
-                    if tag_name != 'GPSInfo': # Double check not to add GPSInfo again
-                        exif_info_string += f"  {tag_name}: {value_str}\n"
-
-                # If no common EXIF tags were found, add a message
-                if exif_info_string == "EXIF Data:\n":
-                    exif_info_string += "  No common EXIF tags found."
-            else:
-                exif_info_string += "  No EXIF data found in this image."
-
-
-            # Update the image info text area
-            self.image_info_text.config(state=tk.NORMAL)
-            self.image_info_text.delete(1.0, tk.END)
-            self.image_info_text.insert(tk.END, resolution_info)
-            self.image_info_text.insert(tk.END, exif_info_string)
-            self.image_info_text.config(state=tk.DISABLED)
-
-            print(f"\nLoaded image info for: {filepath}")
-            print(resolution_info.strip())
-            print(exif_info_string)
-
-            # Close the PIL image to free up resources
-            self.image_info_pil.close()
-            self.image_info_pil = None # Clear the reference
-
-        except FileNotFoundError:
-            messagebox.showerror("Error", f"Image file not found at {filepath}")
-            self.image_info_text.config(state=tk.NORMAL)
-            self.image_info_text.delete(1.0, tk.END)
-            self.image_info_text.insert(tk.END, "Error: File not found.")
-            self.image_info_text.config(state=tk.DISABLED)
-            self.image_info_pil = None
-            self.image_info_path = None
-        except Exception as e:
-            messagebox.showerror("Error reading image info", str(e))
-            import traceback
-            traceback.print_exc() # Print traceback for debugging
-            self.image_info_text.config(state=tk.NORMAL)
-            self.image_info_text.delete(1.0, tk.END)
-            self.image_info_text.insert(tk.END, f"Error reading info: {e}")
-            self.image_info_text.config(state=tk.DISABLED)
-            # Ensure PIL image is closed even if an error occurs
-            if self.image_info_pil:
-                self.image_info_pil.close()
-            self.image_info_pil = None
-            self.image_info_path = None
+    # Removed the load_image_info method entirely
 
 
 if __name__ == "__main__":
