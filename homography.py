@@ -129,6 +129,7 @@ class HomographyCalibratorApp:
 
 
 
+
     def list_camera_resolutions(self):
         """Lists all supported resolutions for the specified camera device using v4l2-ctl."""
         device = self.device_entry.get()
@@ -162,6 +163,7 @@ class HomographyCalibratorApp:
             supported_resolutions = []
             lines = output.splitlines()
             current_format = None
+
             for line_num, line in enumerate(lines):
                 line = line.strip()
                 print(f"Debug: Processing line {line_num + 1}: {line}")  # 逐行输出
@@ -173,14 +175,13 @@ class HomographyCalibratorApp:
                     print(f"  Debug: Found format: {current_format}")
                     continue  # 处理完格式后跳到下一行
 
-                # 匹配分辨率行（更精确的匹配）
-                size_match = re.search(r"Size: Discrete (\d+x\d+)", line)
+                # 匹配分辨率行（更严格的匹配）
+                size_match = re.search(r"^\s*Size:\s*Discrete\s*(\d+x\d+)", line)
                 if size_match and current_format:
                     res = size_match.group(1)
-                    if 'x' in res:
-                        if res not in supported_resolutions:
-                            supported_resolutions.append(res)
-                            print(f"  Debug:   Added resolution: {res}")
+                    if res not in supported_resolutions:
+                        supported_resolutions.append(res)
+                        print(f"  Debug:   Added resolution: {res}")
                     continue  # 处理完分辨率后跳到下一行
 
                 print(f"  Debug:   Skipping line: {line}")  # 所有未匹配的行
@@ -217,7 +218,7 @@ class HomographyCalibratorApp:
             messagebox.showerror("Error", f"Error listing resolutions: {e}")
             print(f"Error listing resolutions for {device}: {e}")
             self.resolution_combobox['values'] = []
-            self.capture_button.config(state=tk.DISABLED)   
+            self.capture_button.config(state=tk.DISABLED)
 
 
 
