@@ -160,31 +160,19 @@ class HomographyCalibratorApp:
             output = result.stdout
             print(f"Debug: v4l2-ctl output:\n{output}")  # 完整输出
 
-            supported_resolutions = []
-            lines = output.splitlines()
-            current_format = None
+            supported_resolutions = set() # Use a set to store unique resolutions
 
-            for line_num, line in enumerate(lines):
+            # Use regex to find all occurrences of "Size: Discrete XXXXxYYYY"
+            # The pattern looks for "Size: Discrete " followed by digits, an 'x', and more digits.
+            # It captures the digitsXdigits part.
+            resolution_pattern = re.compile(r'Size: Discrete (\d+x\d+)')
+
+            for line in output.splitlines():
                 line = line.strip()
-                print(f"Debug: Processing line {line_num + 1}: {line}")  # 逐行输出
-
-                # 匹配像素格式行（更精确的匹配）
-                format_match = re.search(r"Pixel Format: '(.+?)' \(.*", line)
-                if format_match:
-                    current_format = format_match.group(1)
-                    print(f"  Debug: Found format: {current_format}")
-                    continue  # 处理完格式后跳到下一行
-
-                # 匹配分辨率行（更严格的匹配）
-                size_match = re.search(r"^\s*Size:\s*Discrete\s*(\d+x\d+)", line)
-                if size_match and current_format:
-                    res = size_match.group(1)
-                    if res not in supported_resolutions:
-                        supported_resolutions.append(res)
-                        print(f"  Debug:   Added resolution: {res}")
-                    continue  # 处理完分辨率后跳到下一行
-
-                print(f"  Debug:   Skipping line: {line}")  # 所有未匹配的行
+                match = resolution_pattern.search(line)
+                if match:
+                    resolution = match.group(1)
+                    supported_resolutions.add(resolution) # Add to the set
 
             if not supported_resolutions:
                 messagebox.showerror(
@@ -197,13 +185,14 @@ class HomographyCalibratorApp:
                 self.capture_button.config(state=tk.DISABLED)
                 return
 
-            # Sort resolutions by width for a better user experience
-            supported_resolutions.sort(key=lambda x: int(x.split('x')[0]))
-            self.resolution_combobox['values'] = supported_resolutions
-            self.resolution_combobox.set(supported_resolutions[0])
+            # Convert the set to a list and sort by width
+            sorted_resolutions = sorted(list(supported_resolutions), key=lambda x: int(x.split('x')[0]))
+
+            self.resolution_combobox['values'] = sorted_resolutions
+            self.resolution_combobox.set(sorted_resolutions[0])
             self.capture_button.config(state=tk.NORMAL)
-            messagebox.showinfo("Resolutions", f"Supported resolutions:\n{', '.join(supported_resolutions)}")
-            print(f"Supported resolutions for {device}: {supported_resolutions}")
+            messagebox.showinfo("Resolutions", f"Supported resolutions:\n{', '.join(sorted_resolutions)}")
+            print(f"Supported resolutions for {device}: {sorted_resolutions}")
 
         except subprocess.CalledProcessError as e:
             messagebox.showerror(
@@ -219,7 +208,6 @@ class HomographyCalibratorApp:
             print(f"Error listing resolutions for {device}: {e}")
             self.resolution_combobox['values'] = []
             self.capture_button.config(state=tk.DISABLED)
-
 
 
 
