@@ -7,7 +7,7 @@ from PIL import Image, ImageTk # Requires Pillow: pip install Pillow
 import os # For handling file paths
 import sys # For handling path separators
 import time # For timestamp in filenames
-from datetime import datetime
+from datetime import datetime,timezone, timedelta
 # import threading # Tkinter's after is simpler for GUI updates
 
 # Helper function to convert OpenCV image (NumPy array) to Tkinter PhotoImage
@@ -1670,8 +1670,29 @@ class MinimalistCalibratorGUI:
 
         if self.last_frame is not None:
             self.capture_count += 1
-            timestamp = int(time.time()) # Use timestamp for unique filename
-            filename = f"photo_{timestamp}_{self.capture_count}.png" # Suggest png format
+            # --- Generate new filename using Beijing Time (UTC+8) ---
+            # 1. Define Beijing timezone (UTC+8)
+            beijing_tz = timezone(timedelta(hours=8), name='Asia/Shanghai') # 或 'CST'
+
+            # 2. Get current time in UTC
+            utc_now = datetime.now(timezone.utc)
+
+            # 3. Convert UTC time to Beijing time
+            beijing_now = utc_now.astimezone(beijing_tz)
+
+            # 4. Format the Beijing time string
+            timestamp_str = beijing_now.strftime("%Y%m%d_%H%M%S") # Format: 年月日_时分秒
+
+            # Get resolution from the captured frame itself
+            height, width = self.last_frame.shape[:2]
+            resolution_str = f"{width}x{height}" # Format: WidthxHeight
+
+            # Construct the filename
+            filename = f"LB_{timestamp_str}_{resolution_str}_{self.capture_count}.png"
+
+
+
+
             filepath = os.path.join(self.capture_output_folder, filename)
             save_success = False
             try:
@@ -1722,6 +1743,28 @@ class MinimalistCalibratorGUI:
         self.is_capturing = False
         self.is_capturing_preview = False
         self.last_frame = None # Clear stored frame
+
+        # --- Reset Camera Preview Label ---
+        # Reset configuration FIRST, then update status bar/labels
+        try:
+            # Explicitly reset font, style, text, and image
+            self.camera_preview_label.config(
+                font=None,              # <-- Reset font explicitly
+                text="Camera Preview",  # <-- Set default text
+                image='',               # <-- Clear any existing image
+                compound='image'        # <-- Ensure compound mode if needed later
+            )
+            self.camera_preview_label.configure(style="TLabel") # <-- Reset style explicitly
+            self.camera_preview_label.image = None # Clear PhotoImage reference
+
+            # Force Tkinter to update widget states and recalculate layout
+            # This might help if the container was stretched and didn't shrink back
+            self.master.update_idletasks()
+
+        except tk.TclError as e:
+             # Handle potential error if the widget was destroyed unexpectedly
+             print(f"Warning: Could not reset camera_preview_label: {e}")
+        # ---------------------------------     
 
         if self.camera_cap is not None:
             self.camera_cap.release() # Release camera resource
