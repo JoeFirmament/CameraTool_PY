@@ -8,6 +8,7 @@ from PIL import Image, ImageTk, ExifTags
 import os
 from datetime import datetime, timezone, timedelta
 import subprocess
+import re 
 
 class HomographyCalibratorApp:
     def __init__(self, root):
