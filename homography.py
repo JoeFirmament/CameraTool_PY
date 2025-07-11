@@ -22,7 +22,25 @@ class HomographyCalibratorApp:
         # Opens at a reasonable default size, can be resized by user
         self.root.geometry("1000x700") # Adjusted default size
 
-        # --- Add Window Icon ---
+        # --- 安全字体设置 - 避免X11字体错误 ---
+        # 设置默认字体，避免X11字体加载问题
+        try:
+            # 尝试设置系统默认字体
+            self.default_font = ("TkDefaultFont", 10)
+            self.bold_font = ("TkDefaultFont", 10, "bold")
+            self.small_font = ("TkDefaultFont", 9)
+            
+            # 测试字体是否可用
+            test_label = tk.Label(root, text="测试", font=self.default_font)
+            test_label.destroy()  # 立即销毁测试控件
+        except Exception as e:
+            print(f"警告: 字体设置失败，使用系统默认字体: {e}")
+            # 如果自定义字体失败，使用None让系统选择默认字体
+            self.default_font = None
+            self.bold_font = None
+            self.small_font = None
+
+        # --- Add Window Icon (with error handling) ---
         icon_path = "icon.png" # Make sure you have an icon.png file in the same directory
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -73,7 +91,7 @@ class HomographyCalibratorApp:
         self.controls_frame.columnconfigure(1, weight=1)
 
         # --- Calibration Section ---
-        calib_label = ttk.Label(self.controls_frame, text="Calibration Section", font=('Arial', 12, 'bold'))
+        calib_label = ttk.Label(self.controls_frame, text="Calibration Section", font=self.bold_font)
         calib_label.grid(row=0, column=0, columnspan=2, pady=(0, 5), sticky=tk.W) # Reduced pady
 
         self.load_calib_image_button = ttk.Button(self.controls_frame, text="1. Load Calibration Image", command=self.load_calib_image)
@@ -87,17 +105,17 @@ class HomographyCalibratorApp:
         self.load_world_coords_button.grid(row=3, column=0, columnspan=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
 
-        self.point_label = ttk.Label(self.controls_frame, text="Load image and JSON first")
+        self.point_label = ttk.Label(self.controls_frame, text="Load image and JSON first", font=self.default_font)
         self.point_label.grid(row=4, column=0, columnspan=2, pady=(5, 2), sticky=tk.W) # Adjusted row
 
-        self.flat_x_label = ttk.Label(self.controls_frame, text="Real World X:")
+        self.flat_x_label = ttk.Label(self.controls_frame, text="Real World X:", font=self.default_font)
         self.flat_x_label.grid(row=5, column=0, padx=2, pady=1, sticky=tk.W) # Adjusted row
-        self.flat_x_entry = ttk.Entry(self.controls_frame, state=tk.DISABLED)
+        self.flat_x_entry = ttk.Entry(self.controls_frame, state=tk.DISABLED, font=self.default_font)
         self.flat_x_entry.grid(row=5, column=1, padx=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
-        self.flat_y_label = ttk.Label(self.controls_frame, text="Real World Y:")
+        self.flat_y_label = ttk.Label(self.controls_frame, text="Real World Y:", font=self.default_font)
         self.flat_y_label.grid(row=6, column=0, padx=2, pady=1, sticky=tk.W) # Adjusted row
-        self.flat_y_entry = ttk.Entry(self.controls_frame, state=tk.DISABLED)
+        self.flat_y_entry = ttk.Entry(self.controls_frame, state=tk.DISABLED, font=self.default_font)
         self.flat_y_entry.grid(row=6, column=1, padx=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
         self.save_button = ttk.Button(self.controls_frame, text="Save", command=self.save_coordinates, state=tk.DISABLED)
@@ -123,11 +141,11 @@ class HomographyCalibratorApp:
         self.clear_verify_button = ttk.Button(self.controls_frame, text="Clear Verify", command=self.clear_verification_display, state=tk.DISABLED)
         self.clear_verify_button.grid(row=11, column=1, padx=2, pady=(5, 1), sticky=tk.W+tk.E) # Adjusted row
 
-        self.homography_label = ttk.Label(self.controls_frame, text="Homography Matrix:", font=('Arial', 10, 'bold'))
+        self.homography_label = ttk.Label(self.controls_frame, text="Homography Matrix:", font=self.bold_font)
         self.homography_label.grid(row=12, column=0, columnspan=2, pady=(5,0), sticky=tk.W) # Adjusted row
 
-        # Increased height for Homography Matrix text box
-        self.homography_text = tk.Text(self.controls_frame, height=10, width=40, state=tk.DISABLED, wrap=tk.WORD)
+        # Increased height for Homography Matrix text box - 使用安全字体设置
+        self.homography_text = tk.Text(self.controls_frame, height=10, width=40, state=tk.DISABLED, wrap=tk.WORD, font=self.default_font)
         self.homography_text.grid(row=13, column=0, columnspan=2, pady=2, sticky=tk.W+tk.E) # Adjusted row and reduced pady
         self.homography_text.config(state=tk.NORMAL)
         self.homography_text.delete(1.0, tk.END)
@@ -138,21 +156,21 @@ class HomographyCalibratorApp:
         separator.grid(row=14, column=0, columnspan=2, sticky=tk.W+tk.E, pady=5) # Adjusted row and reduced pady
 
         # --- Camera Capture Section --- (Retained as requested)
-        camera_label = ttk.Label(self.controls_frame, text="Camera Capture Section", font=('Arial', 12, 'bold'))
+        camera_label = ttk.Label(self.controls_frame, text="Camera Capture Section", font=self.bold_font)
         camera_label.grid(row=15, column=0, columnspan=2, pady=(0, 5), sticky=tk.W) # Adjusted row
 
-        device_label = ttk.Label(self.controls_frame, text="Camera Device:")
+        device_label = ttk.Label(self.controls_frame, text="Camera Device:", font=self.default_font)
         device_label.grid(row=16, column=0, padx=2, pady=1, sticky=tk.W) # Adjusted row
-        self.device_entry = ttk.Entry(self.controls_frame)
+        self.device_entry = ttk.Entry(self.controls_frame, font=self.default_font)
         self.device_entry.insert(0, "/dev/video0") # Default device
         self.device_entry.grid(row=16, column=1, padx=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
         self.list_resolutions_button = ttk.Button(self.controls_frame, text="List Resolutions", command=self.list_camera_resolutions)
         self.list_resolutions_button.grid(row=17, column=0, columnspan=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
-        resolution_label = ttk.Label(self.controls_frame, text="Resolution:")
+        resolution_label = ttk.Label(self.controls_frame, text="Resolution:", font=self.default_font)
         resolution_label.grid(row=18, column=0, padx=2, pady=1, sticky=tk.W) # Adjusted row
-        self.resolution_combobox = ttk.Combobox(self.controls_frame, state="readonly")
+        self.resolution_combobox = ttk.Combobox(self.controls_frame, state="readonly", font=self.default_font)
         self.resolution_combobox.grid(row=18, column=1, padx=2, pady=1, sticky=tk.W+tk.E) # Adjusted row
 
         # Button to toggle preview/capture
@@ -594,7 +612,7 @@ class HomographyCalibratorApp:
             canvas_center_x = self.canvas.winfo_width() / 2
             canvas_center_y = self.canvas.winfo_height() / 2
             if canvas_center_x > 0 and canvas_center_y > 0: # Ensure canvas has valid dimensions
-                 self.canvas.create_text(canvas_center_x, canvas_center_y, text="预览已停止", fill="black", font=('Arial', 16, 'bold'))
+                 self.canvas.create_text(canvas_center_x, canvas_center_y, text="预览已停止", fill="black", font=self.bold_font)
 
 
             # Restore button and control states
@@ -954,15 +972,15 @@ class HomographyCalibratorApp:
             text_x = x_int + 10
             text_y = y_int - 10
 
-            # Draw outline text (black)
+            # Draw outline text (black) - 使用安全字体
             self.canvas.create_text(
-                text_x, text_y, text=label, anchor=tk.NW, font=('Arial', 10, 'bold'),
+                text_x, text_y, text=label, anchor=tk.NW, font=self.bold_font,
                 fill="black", tags="point_label_outline"
             )
 
-            # Draw main text (white)
+            # Draw main text (white) - 使用安全字体
             self.canvas.create_text(
-                text_x, text_y, text=label, anchor=tk.NW, font=('Arial', 10, 'bold'),
+                text_x, text_y, text=label, anchor=tk.NW, font=self.bold_font,
                 fill="white", tags="point_label_text"
             )
 
@@ -1480,7 +1498,7 @@ class HomographyCalibratorApp:
                 # Draw the calculated world coordinates as text next to the marker
                 text_label = f"({world_x:.2f}, {world_y:.2f})"
                 text_id = self.canvas.create_text(
-                    x_int + 15, y_int + 5, text=text_label, anchor=tk.NW, font=('Arial', 9, 'bold'),
+                    x_int + 15, y_int + 5, text=text_label, anchor=tk.NW, font=self.small_font,
                     fill="lime green", tags="verification_marker"
                 )
                 self.verification_tk_ids.append(text_id) # Store ID to clear later
