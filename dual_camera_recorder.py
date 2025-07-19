@@ -76,6 +76,10 @@ class ModernDualCameraRecorder:
         # Output directory
         self.output_dir = ""
         
+        # Camera rotation settings (degrees: 0, 90, 180, 270)
+        self.camera1_rotation = 0
+        self.camera2_rotation = 0
+        
         # Configure styles
         self.configure_styles()
         
@@ -426,6 +430,28 @@ class ModernDualCameraRecorder:
                                                 state='readonly', width=25)
             self.resolution2_combo.pack(anchor='w')
         
+        # Rotation selection
+        rotation_label = ttk.Label(manual_frame, text="Rotation", 
+                                 style='DeviceName.TLabel')
+        rotation_label.pack(anchor='w', pady=(15, 5))
+        
+        if index == 0:
+            self.rotation1_var = tk.StringVar(value="0°")
+            self.rotation1_combo = ttk.Combobox(manual_frame, textvariable=self.rotation1_var,
+                                              values=["0°", "90°", "180°", "270°"],
+                                              style='Modern.TCombobox', 
+                                              state='readonly', width=25)
+            self.rotation1_combo.pack(anchor='w')
+            self.rotation1_combo.bind('<<ComboboxSelected>>', lambda e: self.update_rotation(0))
+        else:
+            self.rotation2_var = tk.StringVar(value="0°")
+            self.rotation2_combo = ttk.Combobox(manual_frame, textvariable=self.rotation2_var,
+                                              values=["0°", "90°", "180°", "270°"],
+                                              style='Modern.TCombobox', 
+                                              state='readonly', width=25)
+            self.rotation2_combo.pack(anchor='w')
+            self.rotation2_combo.bind('<<ComboboxSelected>>', lambda e: self.update_rotation(1))
+        
         # Preview display - 使用更大的预览区域
         preview_frame = tk.Frame(content, bg=self.colors['card'])
         preview_frame.pack(fill='both', expand=True, pady=(15, 0))
@@ -720,6 +746,30 @@ class ModernDualCameraRecorder:
                     info_label.config(text=info_text)
                     break
                     
+    def update_rotation(self, camera_index):
+        """Update camera rotation setting"""
+        if camera_index == 0:
+            rotation_str = self.rotation1_var.get()
+            self.camera1_rotation = int(rotation_str.replace('°', ''))
+        else:
+            rotation_str = self.rotation2_var.get()
+            self.camera2_rotation = int(rotation_str.replace('°', ''))
+        
+        print(f"Camera {camera_index + 1} rotation set to {rotation_str}")
+        
+    def rotate_frame(self, frame, rotation):
+        """Rotate frame by specified degrees"""
+        if rotation == 0:
+            return frame
+        elif rotation == 90:
+            return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        elif rotation == 180:
+            return cv2.rotate(frame, cv2.ROTATE_180)
+        elif rotation == 270:
+            return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        else:
+            return frame
+                    
     def browse_output_dir(self):
         """Browse for output directory"""
         directory = filedialog.askdirectory(initialdir=self.output_dir_var.get())
@@ -932,9 +982,13 @@ class ModernDualCameraRecorder:
                 ret2, frame2 = self.camera2.read()
                 
                 if ret1 and ret2:
-                    # 写入录制文件
-                    self.writer1.write(frame1)
-                    self.writer2.write(frame2)
+                    # 应用旋转
+                    rotated_frame1 = self.rotate_frame(frame1, self.camera1_rotation)
+                    rotated_frame2 = self.rotate_frame(frame2, self.camera2_rotation)
+                    
+                    # 写入录制文件（使用旋转后的帧）
+                    self.writer1.write(rotated_frame1)
+                    self.writer2.write(rotated_frame2)
                     frame_count += 1
                     
                     # 将帧数据推送到预览队列（非阻塞）
@@ -942,11 +996,11 @@ class ModernDualCameraRecorder:
                         # 如果队列满了，丢弃旧帧以保持实时性
                         if self.frame_queue1.full():
                             self.frame_queue1.get_nowait()
-                        self.frame_queue1.put_nowait(frame1.copy())
+                        self.frame_queue1.put_nowait(rotated_frame1.copy())
                         
                         if self.frame_queue2.full():
                             self.frame_queue2.get_nowait()
-                        self.frame_queue2.put_nowait(frame2.copy())
+                        self.frame_queue2.put_nowait(rotated_frame2.copy())
                     except queue.Full:
                         # 队列满时跳过预览帧，优先保证录制
                         pass
@@ -1292,11 +1346,17 @@ class ModernDualCameraRecorder:
                     filename = f"{device_name}_frame_{frame_count:06d}_t{timestamp:.2f}s.jpg"
                     output_path = os.path.join(output_dir, filename)
                     
-                    cv2.imwrite(output_path, frame)
-                    extracted_count += 1
+                    # 保存帧并检查是否成功
+                    success = cv2.imwrite(output_path, frame)
+                    if success:
+                        extracted_count += 1
+                        print(f"Extracted frame {frame_count} to {filename}")
+                    else:
+                        print(f"Failed to save frame {frame_count} to {filename}")
                     
-                    # 更新进度
-                    self.root.after(0, lambda p=extracted_count: progress_bar.configure(value=p))
+                    # 更新进度（修复lambda变量捕获）
+                    current_count = extracted_count
+                    self.root.after(0, lambda c=current_count: progress_bar.configure(value=c))
                 
                 frame_count += 1
             
