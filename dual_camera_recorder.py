@@ -319,7 +319,10 @@ class ModernDualCameraRecorder:
                                     style='Stop.TButton', state='disabled')
         self.stop_button.pack(side='left', padx=(0, 10))
         
-        # 移除抽帧按钮 - 不需要此功能
+        self.extract_button = ttk.Button(button_frame, text="📸 Export Frames", 
+                                       command=self.show_extract_dialog, 
+                                       style='Primary.TButton')
+        self.extract_button.pack(side='left', padx=(0, 10))
         
         # Status display - 减少间距
         self.status_label = ttk.Label(control_content, text="Ready to record", 
@@ -1037,13 +1040,272 @@ class ModernDualCameraRecorder:
         with open(info_file, 'w') as f:
             json.dump(info, f, indent=2)
             
-    # 移除抽帧功能 - 不需要
+    def show_extract_dialog(self):
+        """显示静帧导出对话框"""
+        # 检查是否有录制的视频文件
+        video_files = []
         
-    # 移除抽帧对话框 - 不需要
+        # 搜索当前工作目录和子目录中的视频文件
+        search_dir = self.output_dir_var.get() if self.output_dir_var.get() else os.getcwd()
+        for root, dirs, files in os.walk(search_dir):
+            for file in files:
+                if file.endswith(('.avi', '.mp4', '.mov', '.mkv')):
+                    video_files.append(os.path.join(root, file))
         
-    # 移除抽帧执行函数 - 不需要
+        if not video_files:
+            messagebox.showwarning("Warning", "No video files found! Please record some videos first.")
+            return
+            
+        # 创建对话框
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Export Video Frames")
+        dialog.geometry("600x500")
+        dialog.configure(bg=self.colors['bg'])
+        dialog.transient(self.root)
+        dialog.grab_set()
         
-    # 移除单个视频抽帧函数 - 不需要
+        # 主框架
+        main_frame = tk.Frame(dialog, bg=self.colors['bg'])
+        main_frame.pack(fill='both', expand=True, padx=20, pady=20)
+        
+        # 标题
+        title_label = ttk.Label(main_frame, text="Export Video Frames to Images", 
+                              style='SectionTitle.TLabel')
+        title_label.pack(anchor='w', pady=(0, 15))
+        
+        # 录制文件夹选择
+        folder_frame = tk.Frame(main_frame, bg=self.colors['bg'])
+        folder_frame.pack(fill='x', pady=(0, 15))
+        
+        ttk.Label(folder_frame, text="Select Recording Folder:", 
+                 style='DeviceInfo.TLabel').pack(anchor='w', pady=(0, 5))
+        
+        # 获取录制文件夹列表（包含camera1和camera2视频的文件夹）
+        recording_folders = []
+        for video_file in video_files:
+            folder = os.path.dirname(video_file)
+            if folder not in recording_folders:
+                # 检查该文件夹是否包含双摄像头录制
+                folder_files = os.listdir(folder)
+                has_camera1 = any('camera1' in f for f in folder_files if f.endswith(('.avi', '.mp4', '.mov', '.mkv')))
+                has_camera2 = any('camera2' in f for f in folder_files if f.endswith(('.avi', '.mp4', '.mov', '.mkv')))
+                if has_camera1 and has_camera2:
+                    recording_folders.append(folder)
+        
+        folder_var = tk.StringVar()
+        folder_combo = ttk.Combobox(folder_frame, textvariable=folder_var,
+                                  values=recording_folders, style='Modern.TCombobox',
+                                  state='readonly', width=70)
+        folder_combo.pack(fill='x')
+        if recording_folders:
+            folder_combo.set(recording_folders[0])
+        
+        # 输出根目录选择
+        output_frame = tk.Frame(main_frame, bg=self.colors['bg'])
+        output_frame.pack(fill='x', pady=(0, 15))
+        
+        ttk.Label(output_frame, text="Output Root Directory:", 
+                 style='DeviceInfo.TLabel').pack(anchor='w', pady=(0, 5))
+        
+        output_dir_frame = tk.Frame(output_frame, bg=self.colors['bg'])
+        output_dir_frame.pack(fill='x')
+        
+        output_var = tk.StringVar(value=os.path.join(search_dir, "exported_frames"))
+        output_entry = ttk.Entry(output_dir_frame, textvariable=output_var,
+                               style='Modern.TEntry')
+        output_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
+        
+        def browse_output():
+            directory = filedialog.askdirectory(initialdir=output_var.get())
+            if directory:
+                output_var.set(directory)
+        
+        ttk.Button(output_dir_frame, text="Browse", 
+                  command=browse_output, 
+                  style='Primary.TButton').pack(side='right')
+        
+        # 间隔设置
+        interval_frame = tk.Frame(main_frame, bg=self.colors['bg'])
+        interval_frame.pack(fill='x', pady=(0, 15))
+        
+        ttk.Label(interval_frame, text="Frame Interval (extract every N frames):", 
+                 style='DeviceInfo.TLabel').pack(anchor='w', pady=(0, 5))
+        
+        interval_var = tk.StringVar(value="30")
+        interval_spin = tk.Spinbox(interval_frame, from_=1, to=300, 
+                                 textvariable=interval_var, width=10)
+        interval_spin.pack(anchor='w')
+        
+        # 摄像头选择
+        camera_frame = tk.Frame(main_frame, bg=self.colors['bg'])
+        camera_frame.pack(fill='x', pady=(0, 15))
+        
+        ttk.Label(camera_frame, text="Export from cameras:", 
+                 style='DeviceInfo.TLabel').pack(anchor='w', pady=(0, 5))
+        
+        camera_options_frame = tk.Frame(camera_frame, bg=self.colors['bg'])
+        camera_options_frame.pack(anchor='w')
+        
+        camera1_var = tk.BooleanVar(value=True)
+        camera2_var = tk.BooleanVar(value=True)
+        
+        tk.Checkbutton(camera_options_frame, text="Camera 1", variable=camera1_var,
+                      bg=self.colors['bg'], fg=self.colors['text']).pack(side='left', padx=(0, 20))
+        tk.Checkbutton(camera_options_frame, text="Camera 2", variable=camera2_var,
+                      bg=self.colors['bg'], fg=self.colors['text']).pack(side='left')
+        
+        # 进度显示
+        progress_frame = tk.Frame(main_frame, bg=self.colors['bg'])
+        progress_frame.pack(fill='x', pady=(0, 15))
+        
+        # Camera 1 进度
+        ttk.Label(progress_frame, text="Camera 1 Progress:", 
+                 style='DeviceInfo.TLabel').pack(anchor='w')
+        progress_bar1 = ttk.Progressbar(progress_frame, mode='determinate', length=500)
+        progress_bar1.pack(fill='x', pady=(2, 8))
+        
+        # Camera 2 进度  
+        ttk.Label(progress_frame, text="Camera 2 Progress:", 
+                 style='DeviceInfo.TLabel').pack(anchor='w')
+        progress_bar2 = ttk.Progressbar(progress_frame, mode='determinate', length=500)
+        progress_bar2.pack(fill='x', pady=(2, 8))
+        
+        progress_label = ttk.Label(progress_frame, text="Ready to extract frames", 
+                                 style='DeviceInfo.TLabel')
+        progress_label.pack(anchor='w', pady=(5, 0))
+        
+        # 按钮框架
+        button_frame = tk.Frame(main_frame, bg=self.colors['bg'])
+        button_frame.pack(fill='x', pady=(10, 0))
+        
+        def start_extraction():
+            recording_folder = folder_var.get()
+            output_root = output_var.get()
+            interval = int(interval_var.get())
+            
+            if not recording_folder:
+                messagebox.showerror("Error", "Please select a recording folder!")
+                return
+                
+            if not camera1_var.get() and not camera2_var.get():
+                messagebox.showerror("Error", "Please select at least one camera!")
+                return
+                
+            # 在新线程中执行抽帧
+            extract_thread = threading.Thread(
+                target=self.extract_dual_frames_thread,
+                args=(recording_folder, output_root, interval, 
+                     camera1_var.get(), camera2_var.get(),
+                     progress_bar1, progress_bar2, progress_label)
+            )
+            extract_thread.daemon = True
+            extract_thread.start()
+        
+        ttk.Button(button_frame, text="Start Extraction", 
+                  command=start_extraction, 
+                  style='Start.TButton').pack(side='left', padx=(0, 10))
+        
+        ttk.Button(button_frame, text="Close", 
+                  command=dialog.destroy, 
+                  style='Primary.TButton').pack(side='right')
+                  
+    def extract_dual_frames_thread(self, recording_folder, output_root, interval, 
+                                  extract_cam1, extract_cam2, 
+                                  progress_bar1, progress_bar2, progress_label):
+        """在单独线程中执行双摄像头帧提取"""
+        try:
+            # 生成带时间戳的输出文件夹名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            folder_name = os.path.basename(recording_folder)
+            export_folder = os.path.join(output_root, f"frames_export_{timestamp}_{folder_name}")
+            
+            # 查找视频文件
+            camera1_video = None
+            camera2_video = None
+            
+            for file in os.listdir(recording_folder):
+                if 'camera1' in file and file.endswith(('.avi', '.mp4', '.mov', '.mkv')):
+                    camera1_video = os.path.join(recording_folder, file)
+                elif 'camera2' in file and file.endswith(('.avi', '.mp4', '.mov', '.mkv')):
+                    camera2_video = os.path.join(recording_folder, file)
+            
+            total_extracted = 0
+            
+            # 提取Camera 1
+            if extract_cam1 and camera1_video:
+                self.root.after(0, lambda: progress_label.config(text="Extracting frames from Camera 1..."))
+                camera1_output = os.path.join(export_folder, "camera1")
+                count = self.extract_frames_from_video(camera1_video, camera1_output, interval, 
+                                                     progress_bar1, "Camera 1")
+                total_extracted += count
+                
+            # 提取Camera 2  
+            if extract_cam2 and camera2_video:
+                self.root.after(0, lambda: progress_label.config(text="Extracting frames from Camera 2..."))
+                camera2_output = os.path.join(export_folder, "camera2")
+                count = self.extract_frames_from_video(camera2_video, camera2_output, interval, 
+                                                     progress_bar2, "Camera 2") 
+                total_extracted += count
+                
+            # 完成提示
+            self.root.after(0, lambda: progress_label.config(
+                text=f"Completed! Extracted {total_extracted} total frames"))
+            self.root.after(0, lambda: messagebox.showinfo(
+                "Success", f"Successfully extracted {total_extracted} frames!\n\nOutput: {export_folder}"))
+                
+        except Exception as e:
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Frame extraction failed: {str(e)}"))
+            
+    def extract_frames_from_video(self, video_path, output_dir, interval, progress_bar, camera_name):
+        """从单个视频提取帧"""
+        try:
+            # 创建输出目录
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # 打开视频文件
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                return 0
+            
+            # 获取视频信息
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            
+            frame_count = 0
+            extracted_count = 0
+            
+            # 更新进度条最大值
+            max_extracts = total_frames // interval
+            self.root.after(0, lambda: progress_bar.configure(maximum=max_extracts))
+            
+            # 获取摄像头设备名（从文件夹信息中推断）
+            device_name = camera_name.lower().replace(" ", "_")
+            
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                # 每隔指定帧数提取一帧
+                if frame_count % interval == 0:
+                    timestamp = frame_count / fps
+                    filename = f"{device_name}_frame_{frame_count:06d}_t{timestamp:.2f}s.jpg"
+                    output_path = os.path.join(output_dir, filename)
+                    
+                    cv2.imwrite(output_path, frame)
+                    extracted_count += 1
+                    
+                    # 更新进度
+                    self.root.after(0, lambda p=extracted_count: progress_bar.configure(value=p))
+                
+                frame_count += 1
+            
+            cap.release()
+            return extracted_count
+            
+        except Exception as e:
+            print(f"Error extracting from {video_path}: {e}")
+            return 0
         
     def start_preview(self):
         """开始预览功能"""
@@ -1080,9 +1342,9 @@ class ModernDualCameraRecorder:
                     self.preview_camera1.release()
                 self.preview_camera1 = cv2.VideoCapture(device_index)
                 if self.preview_camera1.isOpened():
-                    # 设置预览分辨率 - 小尺寸以节省资源
-                    self.preview_camera1.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-                    self.preview_camera1.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+                    # 设置预览分辨率 - 使用1920x1080确保画面完整
+                    self.preview_camera1.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                    self.preview_camera1.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
                     self.preview_camera1.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     self.preview_camera1.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             else:
@@ -1090,9 +1352,9 @@ class ModernDualCameraRecorder:
                     self.preview_camera2.release()
                 self.preview_camera2 = cv2.VideoCapture(device_index)
                 if self.preview_camera2.isOpened():
-                    # 设置预览分辨率 - 小尺寸以节省资源
-                    self.preview_camera2.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-                    self.preview_camera2.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+                    # 设置预览分辨率 - 使用1920x1080确保画面完整
+                    self.preview_camera2.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                    self.preview_camera2.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
                     self.preview_camera2.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     self.preview_camera2.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     
