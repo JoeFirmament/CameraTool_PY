@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-修复版本的Homography标定工具
-解决X11字体转发问题的完整解决方案
+Fixed version of Homography calibration tool
+Complete solution to X11 font forwarding issues
 """
 
 import os
 import sys
 
-# 设置环境变量以避免字体问题
+# Set environment variables to avoid font issues
 os.environ['TK_SILENCE_DEPRECATION'] = '1'
-if 'DISPLAY' in os.environ:
-    # 强制使用本地字体而不是X11转发的字体
-    os.environ['FONTCONFIG_FILE'] = '/dev/null'
+#if 'DISPLAY' in os.environ:
+#    # Force using local fonts instead of X11 forwarded fonts
+#    os.environ['FONTCONFIG_FILE'] = '/dev/null'
 
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -27,97 +27,97 @@ from datetime import datetime
 
 class HomographyCalibrator:
     def __init__(self):
-        print("初始化Homography标定工具...")
+        print("Initializing Homography calibration tool...")
         
-        # 创建主窗口时使用最安全的配置
+        # Create main window with safest configuration
         self.root = tk.Tk()
         
-        # 设置窗口属性
+        # Set window properties
         self.root.title("Homography Calibrator")
         self.root.geometry("1200x800")
         
-        # 禁用一些可能导致问题的特性
+        # Disable some features that might cause issues
         try:
             self.root.option_add('*tearOff', False)
-            # 不设置字体选项，让系统自动选择
+            # Don't set font options, let system choose automatically
         except:
             pass
         
-        print("主窗口创建成功")
+        print("Main window created successfully")
         
-        # 初始化数据
+        # Initialize data
         self.init_data()
         
-        # 创建界面
+        # Create interface
         self.create_interface()
         
-        # 绑定事件
+        # Bind events
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        print("程序初始化完成")
+        print("Program initialization completed")
     
     def init_data(self):
-        """初始化数据成员"""
-        # 摄像头相关
+        """Initialize data members"""
+        # Camera related
         self.cap = None
         self.is_previewing = False
         self.preview_thread = None
         self.current_frame = None
         
-        # 标定相关
+        # Calibration related
         self.calibration_points = []
         self.homography_matrix = None
         self.is_calibration_mode = False
         self.is_verification_mode = False
         
-        # 显示相关
+        # Display related
         self.canvas_scale = 1.0
         self.canvas_offset_x = 0
         self.canvas_offset_y = 0
         self.selected_point_id = None
     
     def create_interface(self):
-        """创建用户界面"""
-        print("创建用户界面...")
+        """Create user interface"""
+        print("Creating user interface...")
         
-        # 主容器
+        # Main container
         main_container = tk.Frame(self.root)
         main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # 左侧：预览区域
+        # Left: preview area
         self.create_preview_area(main_container)
         
-        # 右侧：控制区域
+        # Right: control area
         self.create_control_area(main_container)
         
-        print("界面创建完成")
+        print("Interface creation completed")
     
     def create_preview_area(self, parent):
-        """创建预览区域"""
+        """Create preview area"""
         preview_frame = tk.Frame(parent, bg='lightgray')
         preview_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # 画布
+        # Canvas
         self.canvas = tk.Canvas(preview_frame, bg='gray', width=800, height=600)
         self.canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.canvas.bind('<Button-1>', self.on_canvas_click)
         
-        # 状态标签
-        self.canvas_status = tk.Label(preview_frame, text="点击'开始预览'启动摄像头", 
+        # Status label
+        self.canvas_status = tk.Label(preview_frame, text="Click 'Start Preview' to start camera", 
                                      bg='lightgray')
         self.canvas_status.pack(pady=2)
     
     def create_control_area(self, parent):
-        """创建控制区域"""
+        """Create control area"""
         control_frame = tk.Frame(parent, width=350, bg='white')
         control_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         control_frame.pack_propagate(False)
         
-        # 标题 - 不指定字体
-        title_label = tk.Label(control_frame, text="Homography标定工具", bg='white')
+        # Title - no font specification
+        title_label = tk.Label(control_frame, text="Homography Calibration Tool", bg='white')
         title_label.pack(pady=10)
         
-        # 各个控制区域
+        # Various control areas
         self.create_camera_section(control_frame)
         self.create_calibration_section(control_frame)
         self.create_points_section(control_frame)
@@ -125,69 +125,69 @@ class HomographyCalibrator:
         self.create_status_section(control_frame)
     
     def create_camera_section(self, parent):
-        """创建摄像头控制区域"""
-        section = tk.LabelFrame(parent, text="摄像头控制", bg='white')
+        """Create camera control area"""
+        section = tk.LabelFrame(parent, text="Camera Control", bg='white')
         section.pack(fill=tk.X, padx=10, pady=5)
         
-        # 设备路径
-        tk.Label(section, text="设备:", bg='white').pack(anchor=tk.W, padx=5)
+        # Device path
+        tk.Label(section, text="Device:", bg='white').pack(anchor=tk.W, padx=5)
         self.device_var = tk.StringVar(value="/dev/video0")
         device_entry = tk.Entry(section, textvariable=self.device_var)
         device_entry.pack(fill=tk.X, padx=5, pady=2)
         
-        # 检测分辨率按钮
-        detect_btn = tk.Button(section, text="检测分辨率", 
+        # Detect resolution button
+        detect_btn = tk.Button(section, text="Detect Resolution", 
                               command=self.detect_resolutions)
         detect_btn.pack(fill=tk.X, padx=5, pady=2)
         
-        # 分辨率选择
-        tk.Label(section, text="分辨率:", bg='white').pack(anchor=tk.W, padx=5)
+        # Resolution selection
+        tk.Label(section, text="Resolution:", bg='white').pack(anchor=tk.W, padx=5)
         self.resolution_var = tk.StringVar()
         self.resolution_combo = ttk.Combobox(section, textvariable=self.resolution_var,
                                            state='readonly')
         self.resolution_combo.pack(fill=tk.X, padx=5, pady=2)
         
-        # 预览控制
-        self.preview_btn = tk.Button(section, text="开始预览", 
+        # Preview control
+        self.preview_btn = tk.Button(section, text="Start Preview", 
                                    command=self.toggle_preview,
                                    state=tk.DISABLED)
         self.preview_btn.pack(fill=tk.X, padx=5, pady=5)
     
     def create_calibration_section(self, parent):
-        """创建标定控制区域"""
-        section = tk.LabelFrame(parent, text="标定控制", bg='white')
+        """Create calibration control area"""
+        section = tk.LabelFrame(parent, text="Calibration Control", bg='white')
         section.pack(fill=tk.X, padx=10, pady=5)
         
-        # 标定模式
+        # Calibration mode
         self.calib_mode_var = tk.BooleanVar()
-        calib_check = tk.Checkbutton(section, text="标定模式 (点击添加点)",
+        calib_check = tk.Checkbutton(section, text="Calibration Mode (click to add points)",
                                    variable=self.calib_mode_var,
                                    command=self.toggle_calibration_mode,
                                    bg='white')
         calib_check.pack(anchor=tk.W, padx=5, pady=2)
         
-        # 验证模式
+        # Verification mode
         self.verify_mode_var = tk.BooleanVar()
-        self.verify_check = tk.Checkbutton(section, text="验证模式 (点击查看坐标)",
+        self.verify_check = tk.Checkbutton(section, text="Verification Mode (click to view coordinates)",
                                          variable=self.verify_mode_var,
                                          command=self.toggle_verification_mode,
                                          bg='white', state=tk.DISABLED)
         self.verify_check.pack(anchor=tk.W, padx=5, pady=2)
         
-        # 显示Y轴5-10米验证点（两侧分布）
+        # Show Y-axis 5-10m verification points (both sides)
         self.grid_var = tk.BooleanVar()
-        self.grid_check = tk.Checkbutton(section, text="显示Y轴5-10米验证点(两侧)",
+        self.grid_check = tk.Checkbutton(section, text="Show Y-axis 5-10m verification points (both sides)",
                                        variable=self.grid_var,
                                        command=self.toggle_grid,
                                        bg='white', state=tk.DISABLED)
         self.grid_check.pack(anchor=tk.W, padx=5, pady=2)
     
     def create_points_section(self, parent):
-        """创建点管理区域"""
-        section = tk.LabelFrame(parent, text="标定点管理", bg='white')
+        """Create points management area"""
+        section = tk.LabelFrame(parent, text="Calibration Points Management", bg='white')
         section.pack(fill=tk.X, padx=10, pady=5)
         
-        # 点列表
+        # Points list
         list_frame = tk.Frame(section, bg='white')
         list_frame.pack(fill=tk.BOTH, expand=True)
         
@@ -200,58 +200,58 @@ class HomographyCalibrator:
         self.points_listbox.config(yscrollcommand=scrollbar.set)
         scrollbar.config(command=self.points_listbox.yview)
         
-        # 操作按钮
+        # Operation buttons
         btn_frame = tk.Frame(section, bg='white')
         btn_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        self.edit_btn = tk.Button(btn_frame, text="编辑", 
+        self.edit_btn = tk.Button(btn_frame, text="Edit", 
                                 command=self.edit_point, state=tk.DISABLED)
         self.edit_btn.pack(side=tk.LEFT, padx=2)
         
-        self.delete_btn = tk.Button(btn_frame, text="删除", 
+        self.delete_btn = tk.Button(btn_frame, text="Delete", 
                                   command=self.delete_point, state=tk.DISABLED)
         self.delete_btn.pack(side=tk.LEFT, padx=2)
         
-        clear_btn = tk.Button(btn_frame, text="清空", command=self.clear_points)
+        clear_btn = tk.Button(btn_frame, text="Clear", command=self.clear_points)
         clear_btn.pack(side=tk.RIGHT, padx=2)
     
     def create_calculation_section(self, parent):
-        """创建计算区域"""
-        section = tk.LabelFrame(parent, text="矩阵计算", bg='white')
+        """Create calculation area"""
+        section = tk.LabelFrame(parent, text="Matrix Calculation", bg='white')
         section.pack(fill=tk.X, padx=10, pady=5)
         
-        # 计算按钮
-        self.calc_btn = tk.Button(section, text="计算Homography矩阵",
+        # Calculate button
+        self.calc_btn = tk.Button(section, text="Calculate Homography Matrix",
                                 command=self.calculate_homography,
                                 state=tk.DISABLED)
         self.calc_btn.pack(fill=tk.X, padx=5, pady=5)
         
-        # 保存加载按钮
+        # Save and load buttons
         file_frame = tk.Frame(section, bg='white')
         file_frame.pack(fill=tk.X, padx=5, pady=2)
         
-        self.save_btn = tk.Button(file_frame, text="保存",
+        self.save_btn = tk.Button(file_frame, text="Save",
                                 command=self.save_calibration,
                                 state=tk.DISABLED)
         self.save_btn.pack(side=tk.LEFT, padx=2)
         
-        load_btn = tk.Button(file_frame, text="加载",
+        load_btn = tk.Button(file_frame, text="Load",
                            command=self.load_calibration)
         load_btn.pack(side=tk.RIGHT, padx=2)
     
     def create_status_section(self, parent):
-        """创建状态显示区域"""
-        section = tk.LabelFrame(parent, text="状态信息", bg='white')
+        """Create status display area"""
+        section = tk.LabelFrame(parent, text="Status Information", bg='white')
         section.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
         self.status_text = tk.Text(section, height=8, wrap=tk.WORD, 
                                  state=tk.DISABLED, bg='white')
         self.status_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        self.log_message("程序已启动，请先检测摄像头分辨率")
+        self.log_message("Program started, please detect camera resolution first")
     
     def log_message(self, message):
-        """添加日志消息"""
+        """Add log message"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         full_message = f"[{timestamp}] {message}\n"
         
@@ -263,14 +263,14 @@ class HomographyCalibrator:
         print(f"LOG: {message}")
     
     def detect_resolutions(self):
-        """检测摄像头分辨率"""
+        """Detect camera resolutions"""
         device = self.device_var.get()
         if not device:
-            messagebox.showerror("错误", "请输入设备路径")
+            messagebox.showerror("Error", "Please enter device path")
             return
         
         try:
-            self.log_message(f"检测设备 {device} 的分辨率...")
+            self.log_message(f"Detecting resolutions for device {device}...")
             
             result = subprocess.run(
                 ["v4l2-ctl", "--device", device, "--list-formats-ext"],
@@ -288,7 +288,7 @@ class HomographyCalibrator:
                 res_list = sorted(list(resolutions), key=lambda x: int(x.split('x')[0]))
                 self.resolution_combo['values'] = res_list
                 
-                # 设置默认分辨率
+                # Set default resolution
                 if "1920x1080" in res_list:
                     self.resolution_var.set("1920x1080")
                 elif "1280x720" in res_list:
@@ -297,35 +297,35 @@ class HomographyCalibrator:
                     self.resolution_var.set(res_list[0])
                 
                 self.preview_btn.config(state=tk.NORMAL)
-                self.log_message(f"检测到 {len(res_list)} 种分辨率: {', '.join(res_list)}")
+                self.log_message(f"Detected {len(res_list)} resolutions: {', '.join(res_list)}")
             else:
-                messagebox.showerror("错误", "未检测到支持的分辨率")
-                self.log_message("未检测到支持的分辨率")
+                messagebox.showerror("Error", "No supported resolutions detected")
+                self.log_message("No supported resolutions detected")
                 
         except subprocess.TimeoutExpired:
-            messagebox.showerror("错误", "检测超时")
-            self.log_message("分辨率检测超时")
+            messagebox.showerror("Error", "Detection timeout")
+            self.log_message("Resolution detection timeout")
         except subprocess.CalledProcessError as e:
-            messagebox.showerror("错误", f"无法访问设备: {e}")
-            self.log_message(f"设备访问失败: {e}")
+            messagebox.showerror("Error", f"Cannot access device: {e}")
+            self.log_message(f"Device access failed: {e}")
         except Exception as e:
-            messagebox.showerror("错误", f"检测失败: {e}")
-            self.log_message(f"检测失败: {e}")
+            messagebox.showerror("Error", f"Detection failed: {e}")
+            self.log_message(f"Detection failed: {e}")
     
     def toggle_preview(self):
-        """切换预览状态"""
+        """Toggle preview status"""
         if self.is_previewing:
             self.stop_preview()
         else:
             self.start_preview()
     
     def start_preview(self):
-        """开始预览"""
+        """Start preview"""
         device = self.device_var.get()
         resolution = self.resolution_var.get()
         
         if not device or not resolution:
-            messagebox.showwarning("警告", "请设置设备和分辨率")
+            messagebox.showwarning("Warning", "Please set device and resolution")
             return
         
         try:
@@ -333,28 +333,28 @@ class HomographyCalibrator:
             
             self.cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
             if not self.cap.isOpened():
-                raise Exception("无法打开摄像头")
+                raise Exception("Cannot open camera")
             
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
             
             self.is_previewing = True
-            self.preview_btn.config(text="停止预览")
+            self.preview_btn.config(text="Stop Preview")
             
-            # 启动预览线程
+            # Start preview thread
             self.preview_thread = threading.Thread(target=self.preview_loop, daemon=True)
             self.preview_thread.start()
             
-            self.log_message(f"预览已启动: {resolution}")
-            self.canvas_status.config(text=f"预览中: {resolution}")
+            self.log_message(f"Preview started: {resolution}")
+            self.canvas_status.config(text=f"Previewing: {resolution}")
             
         except Exception as e:
-            messagebox.showerror("错误", f"启动预览失败: {e}")
-            self.log_message(f"预览启动失败: {e}")
+            messagebox.showerror("Error", f"Failed to start preview: {e}")
+            self.log_message(f"Preview startup failed: {e}")
             self.stop_preview()
     
     def stop_preview(self):
-        """停止预览"""
+        """Stop preview"""
         self.is_previewing = False
         
         if self.cap:
@@ -362,14 +362,14 @@ class HomographyCalibrator:
             self.cap = None
         
         self.current_frame = None
-        self.preview_btn.config(text="开始预览")
+        self.preview_btn.config(text="Start Preview")
         self.canvas.delete("all")
         
-        self.log_message("预览已停止")
-        self.canvas_status.config(text="预览已停止")
+        self.log_message("Preview stopped")
+        self.canvas_status.config(text="Preview stopped")
     
     def preview_loop(self):
-        """预览循环"""
+        """Preview loop"""
         while self.is_previewing and self.cap:
             ret, frame = self.cap.read()
             if ret:
@@ -378,16 +378,16 @@ class HomographyCalibrator:
             time.sleep(0.03)
     
     def update_display(self):
-        """更新画布显示"""
+        """Update canvas display"""
         if self.current_frame is None:
             return
         
         try:
-            # 在帧上绘制覆盖层
+            # Draw overlay on frame
             display_frame = self.current_frame.copy()
             self.draw_overlay(display_frame)
             
-            # 计算缩放参数
+            # Calculate scaling parameters
             canvas_w = self.canvas.winfo_width()
             canvas_h = self.canvas.winfo_height()
             
@@ -403,7 +403,7 @@ class HomographyCalibrator:
             self.canvas_offset_x = (canvas_w - new_w) // 2
             self.canvas_offset_y = (canvas_h - new_h) // 2
             
-            # 转换并显示
+            # Convert and display
             img_rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
             img_pil = Image.fromarray(img_rgb)
             img_pil = img_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
@@ -415,57 +415,57 @@ class HomographyCalibrator:
                                    anchor=tk.NW, image=self.photo, tags="image")
             
         except Exception as e:
-            print(f"显示更新失败: {e}")
+            print(f"Display update failed: {e}")
     
     def draw_overlay(self, frame):
-        """绘制覆盖层"""
-        # 绘制标定点
+        """Draw overlay"""
+        # Draw calibration points
         for i, point in enumerate(self.calibration_points):
             px, py = map(int, point['pixel'])
             
-            # 点的颜色
+            # Point color
             color = (0, 255, 0) if point.get('world') else (0, 0, 255)
             
-            # 绘制点
+            # Draw point
             cv2.circle(frame, (px, py), 8, color, -1)
             cv2.circle(frame, (px, py), 10, (255, 255, 255), 2)
             
-            # 绘制编号
+            # Draw number
             cv2.putText(frame, str(i+1), (px-10, py-15),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
-            # 显示世界坐标
+            # Display world coordinates
             if point.get('world'):
                 wx, wy = point['world']
                 text = f"({wx:.1f},{wy:.1f})"
                 cv2.putText(frame, text, (px+15, py+5),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
-        # 绘制Y轴5-10米验证点
+        # Draw Y-axis 5-10m verification points
         if self.homography_matrix is not None and self.grid_var.get():
             self.draw_random_points(frame)
     
     def draw_random_points(self, frame):
-        """绘制Y轴5-10米距离范围内的验证点（两侧分布）"""
+        """Draw verification points in Y-axis 5-10m range (both sides distribution)"""
         try:
-            print("开始绘制指定验证点...")
+            print("Starting to draw specified verification points...")
             H_inv = np.linalg.inv(self.homography_matrix)
             img_h, img_w = frame.shape[:2]
             
-            # 定义Y轴5-10米距离范围内的5个验证点，分布在Y轴两侧 (单位:毫米)
-            y_distances = [5000, 6250, 7500, 8750, 10000]  # 5个等间距的Y轴距离
+            # Define 5 verification points in Y-axis 5-10m range, distributed on both sides of Y-axis (unit: mm)
+            y_distances = [5000, 6250, 7500, 8750, 10000]  # 5 equally spaced Y-axis distances
             verification_points = []
             
             for y_dist in y_distances:
-                # 每个Y距离在左右两侧各放一个点
-                verification_points.append((-500, y_dist))  # 左侧0.5米
-                verification_points.append((500, y_dist))   # 右侧0.5米
+                # Place one point on each side for each Y distance
+                verification_points.append((-500, y_dist))  # Left side 0.5m
+                verification_points.append((500, y_dist))   # Right side 0.5m
             
             points_drawn = 0
             
             for i, (world_x, world_y) in enumerate(verification_points):
                 
-                # 将世界坐标转换为像素坐标
+                # Convert world coordinates to pixel coordinates
                 world_pt = np.array([[world_x], [world_y], [1.0]], dtype=np.float32)
                 pixel_pt = np.dot(H_inv, world_pt)
                 
@@ -473,44 +473,44 @@ class HomographyCalibrator:
                     px = pixel_pt[0, 0] / pixel_pt[2, 0]
                     py = pixel_pt[1, 0] / pixel_pt[2, 0]
                     
-                    # 检查点是否在图像范围内
+                    # Check if point is within image bounds
                     if 0 <= px <= img_w and 0 <= py <= img_h:
                         px_int = int(px)
                         py_int = int(py)
                         
-                        # 所有验证点都使用小点，根据左右位置选择颜色
-                        if world_x < 0:  # 左侧点用蓝色
-                            point_color = (255, 0, 0)      # 蓝色
-                        else:  # 右侧点用绿色
-                            point_color = (0, 255, 0)      # 绿色
+                        # All verification points use small dots, color based on left/right position
+                        if world_x < 0:  # Left side points use blue
+                            point_color = (255, 0, 0)      # Blue
+                        else:  # Right side points use green
+                            point_color = (0, 255, 0)      # Green
                         
-                        point_radius = 4                    # 统一小点
-                        border_color = (255, 255, 255)     # 白色边框
+                        point_radius = 4                    # Uniform small dots
+                        border_color = (255, 255, 255)     # White border
                         border_radius = 6
                         
-                        # 绘制点
-                        cv2.circle(frame, (px_int, py_int), point_radius, point_color, -1)  # 填充圆
-                        cv2.circle(frame, (px_int, py_int), border_radius, border_color, 2)  # 边框
+                        # Draw point
+                        cv2.circle(frame, (px_int, py_int), point_radius, point_color, -1)  # Fill circle
+                        cv2.circle(frame, (px_int, py_int), border_radius, border_color, 2)  # Border
                         
-                        # 显示世界坐标 (转换为米)
+                        # Display world coordinates (convert to meters)
                         world_x_m = world_x / 1000.0
                         world_y_m = world_y / 1000.0
                         coord_text = f"({world_x_m:.2f}m, {world_y_m:.2f}m)"
                         
-                        # 计算文本位置，避免超出画面边界
+                        # Calculate text position, avoid going out of screen bounds
                         text_x = px_int + 15
                         text_y = py_int - 10
                         
-                        # 检查文本是否会超出右边界
+                        # Check if text would exceed right boundary
                         text_size = cv2.getTextSize(coord_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
                         if text_x + text_size[0] > img_w:
                             text_x = px_int - text_size[0] - 15
                         
-                        # 检查文本是否会超出上边界
+                        # Check if text would exceed top boundary
                         if text_y < 20:
                             text_y = py_int + 25
                         
-                        # 绘制文本背景（黑色半透明）
+                        # Draw text background (black semi-transparent)
                         text_bg_x1 = max(0, text_x - 5)
                         text_bg_y1 = max(0, text_y - 15)
                         text_bg_x2 = min(img_w, text_x + text_size[0] + 5)
@@ -520,38 +520,38 @@ class HomographyCalibrator:
                         cv2.rectangle(overlay, (text_bg_x1, text_bg_y1), (text_bg_x2, text_bg_y2), (0, 0, 0), -1)
                         cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
                         
-                        # 绘制坐标文本
+                        # Draw coordinate text
                         cv2.putText(frame, coord_text, (text_x, text_y),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                         
-                        # 绘制点编号
+                        # Draw point number
                         point_num = str(i + 1)
                         cv2.putText(frame, point_num, (px_int - 5, py_int + 5),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 2)  # 黑色背景
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 2)  # Black background
                         cv2.putText(frame, point_num, (px_int - 5, py_int + 5),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)  # 白色前景
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)  # White foreground
                         
                         points_drawn += 1
-                        side = "左" if world_x < 0 else "右"
-                        print(f"验证点 #{i+1}: 世界坐标({world_x_m:.1f}m, {world_y_m:.1f}m) [{side}侧] -> 像素坐标({px_int}, {py_int})")
+                        side = "Left" if world_x < 0 else "Right"
+                        print(f"Verification point #{i+1}: World coordinates({world_x_m:.1f}m, {world_y_m:.1f}m) [{side} side] -> Pixel coordinates({px_int}, {py_int})")
             
-            print(f"Y轴5-10米验证点绘制完成，共绘制 {points_drawn} 个点 (总共 {len(verification_points)} 个点)")
+            print(f"Y-axis 5-10m verification points drawing completed, drew {points_drawn} points (total {len(verification_points)} points)")
             if points_drawn == 0:
-                print("警告: 没有在视野范围内找到5-10米距离的验证点，请检查标定结果或调整摄像头位置")
+                print("Warning: No verification points found in 5-10m range within field of view, please check calibration results or adjust camera position")
             elif points_drawn < len(verification_points):
-                print(f"提示: 有 {len(verification_points) - points_drawn} 个验证点在视野范围外")
+                print(f"Note: {len(verification_points) - points_drawn} verification points are outside field of view")
                 
         except Exception as e:
-            print(f"验证点绘制失败: {e}")
+            print(f"Verification points drawing failed: {e}")
             import traceback
             traceback.print_exc()
     
     def on_canvas_click(self, event):
-        """处理画布点击"""
+        """Handle canvas click"""
         if not self.is_previewing or self.current_frame is None:
             return
         
-        # 转换坐标
+        # Convert coordinates
         canvas_x = event.x - self.canvas_offset_x
         canvas_y = event.y - self.canvas_offset_y
         
@@ -571,21 +571,21 @@ class HomographyCalibrator:
             self.verify_point(pixel_x, pixel_y)
     
     def add_calibration_point(self, pixel_x, pixel_y):
-        """添加标定点"""
-        # 检查是否点击了现有点
+        """Add calibration point"""
+        # Check if clicked on existing point
         for i, point in enumerate(self.calibration_points):
             px, py = point['pixel']
             if abs(px - pixel_x) < 20 and abs(py - pixel_y) < 20:
                 self.edit_existing_point(i)
                 return
         
-        # 输入世界坐标
+        # Input world coordinates
         try:
-            x_str = simpledialog.askstring("输入坐标", "请输入X坐标 (毫米):")
+            x_str = simpledialog.askstring("Input Coordinates", "Please enter X coordinate (mm):")
             if x_str is None:
                 return
             
-            y_str = simpledialog.askstring("输入坐标", "请输入Y坐标 (毫米):")
+            y_str = simpledialog.askstring("Input Coordinates", "Please enter Y coordinate (mm):")
             if y_str is None:
                 return
             
@@ -602,16 +602,16 @@ class HomographyCalibrator:
             self.update_points_list()
             self.update_button_states()
             
-            self.log_message(f"添加点 #{len(self.calibration_points)}: "
-                           f"像素({pixel_x:.1f},{pixel_y:.1f}) -> 世界({world_x},{world_y})")
+            self.log_message(f"Added point #{len(self.calibration_points)}: "
+                           f"Pixel({pixel_x:.1f},{pixel_y:.1f}) -> World({world_x},{world_y})")
             
         except (ValueError, TypeError):
-            messagebox.showerror("错误", "请输入有效数字")
+            messagebox.showerror("Error", "Please enter valid numbers")
     
     def verify_point(self, pixel_x, pixel_y):
-        """验证点坐标"""
+        """Verify point coordinates"""
         if self.homography_matrix is None:
-            messagebox.showwarning("警告", "请先计算Homography矩阵")
+            messagebox.showwarning("Warning", "Please calculate Homography matrix first")
             return
         
         try:
@@ -622,59 +622,59 @@ class HomographyCalibrator:
                 world_x = world_pt[0, 0] / world_pt[2, 0]
                 world_y = world_pt[1, 0] / world_pt[2, 0]
                 
-                messagebox.showinfo("验证结果",
-                                  f"像素坐标: ({pixel_x:.1f}, {pixel_y:.1f})\n"
-                                  f"世界坐标: ({world_x:.2f}, {world_y:.2f}) mm")
+                messagebox.showinfo("Verification Result",
+                                  f"Pixel coordinates: ({pixel_x:.1f}, {pixel_y:.1f})\n"
+                                  f"World coordinates: ({world_x:.2f}, {world_y:.2f}) mm")
                 
-                self.log_message(f"验证: 像素({pixel_x:.1f},{pixel_y:.1f}) -> "
-                               f"世界({world_x:.2f},{world_y:.2f})")
+                self.log_message(f"Verification: Pixel({pixel_x:.1f},{pixel_y:.1f}) -> "
+                               f"World({world_x:.2f},{world_y:.2f})")
             else:
-                messagebox.showerror("错误", "坐标变换失败")
+                messagebox.showerror("Error", "Coordinate transformation failed")
                 
         except Exception as e:
-            messagebox.showerror("错误", f"验证失败: {e}")
+            messagebox.showerror("Error", f"Verification failed: {e}")
     
     def toggle_calibration_mode(self):
-        """切换标定模式"""
+        """Toggle calibration mode"""
         self.is_calibration_mode = self.calib_mode_var.get()
         if self.is_calibration_mode and self.is_verification_mode:
             self.verify_mode_var.set(False)
             self.is_verification_mode = False
         
-        status = "启用" if self.is_calibration_mode else "关闭"
-        self.log_message(f"标定模式已{status}")
+        status = "Enabled" if self.is_calibration_mode else "Disabled"
+        self.log_message(f"Calibration mode {status}")
     
     def toggle_verification_mode(self):
-        """切换验证模式"""
+        """Toggle verification mode"""
         self.is_verification_mode = self.verify_mode_var.get()
         if self.is_verification_mode and self.is_calibration_mode:
             self.calib_mode_var.set(False)
             self.is_calibration_mode = False
         
-        status = "启用" if self.is_verification_mode else "关闭"
-        self.log_message(f"验证模式已{status}")
+        status = "Enabled" if self.is_verification_mode else "Disabled"
+        self.log_message(f"Verification mode {status}")
     
     def toggle_grid(self):
-        """切换Y轴5-10米验证点显示（两侧分布）"""
-        status = "启用" if self.grid_var.get() else "关闭"
-        self.log_message(f"Y轴5-10米验证点(两侧)显示已{status}")
+        """Toggle Y-axis 5-10m verification points display (both sides distribution)"""
+        status = "Enabled" if self.grid_var.get() else "Disabled"
+        self.log_message(f"Y-axis 5-10m verification points (both sides) display {status}")
     
     def update_points_list(self):
-        """更新点列表"""
+        """Update points list"""
         self.points_listbox.delete(0, tk.END)
         
         for i, point in enumerate(self.calibration_points):
             px, py = point['pixel']
             if point.get('world'):
                 wx, wy = point['world']
-                text = f"点{i+1}: ({px:.1f},{py:.1f}) -> ({wx},{wy})"
+                text = f"Point{i+1}: ({px:.1f},{py:.1f}) -> ({wx},{wy})"
             else:
-                text = f"点{i+1}: ({px:.1f},{py:.1f}) -> 未设置"
+                text = f"Point{i+1}: ({px:.1f},{py:.1f}) -> Not set"
             
             self.points_listbox.insert(tk.END, text)
     
     def on_point_select(self, event):
-        """处理点选择"""
+        """Handle point selection"""
         selection = self.points_listbox.curselection()
         if selection:
             self.selected_point_id = selection[0]
@@ -686,12 +686,12 @@ class HomographyCalibrator:
             self.delete_btn.config(state=tk.DISABLED)
     
     def edit_point(self):
-        """编辑选中点"""
+        """Edit selected point"""
         if self.selected_point_id is not None:
             self.edit_existing_point(self.selected_point_id)
     
     def edit_existing_point(self, point_index):
-        """编辑已存在的点"""
+        """Edit existing point"""
         if point_index >= len(self.calibration_points):
             return
         
@@ -699,13 +699,13 @@ class HomographyCalibrator:
         current_world = point.get('world', (0, 0))
         
         try:
-            x_str = simpledialog.askstring("编辑坐标", 
-                                         f"X坐标 (当前: {current_world[0]}):")
+            x_str = simpledialog.askstring("Edit Coordinates", 
+                                         f"X coordinate (current: {current_world[0]}):")
             if x_str is None:
                 return
             
-            y_str = simpledialog.askstring("编辑坐标",
-                                         f"Y坐标 (当前: {current_world[1]}):")
+            y_str = simpledialog.askstring("Edit Coordinates",
+                                         f"Y coordinate (current: {current_world[1]}):")
             if y_str is None:
                 return
             
@@ -717,47 +717,47 @@ class HomographyCalibrator:
             self.update_button_states()
             
             px, py = point['pixel']
-            self.log_message(f"更新点 #{point_index+1}: "
-                           f"像素({px:.1f},{py:.1f}) -> 世界({world_x},{world_y})")
+            self.log_message(f"Updated point #{point_index+1}: "
+                           f"Pixel({px:.1f},{py:.1f}) -> World({world_x},{world_y})")
             
         except (ValueError, TypeError):
-            messagebox.showerror("错误", "请输入有效数字")
+            messagebox.showerror("Error", "Please enter valid numbers")
     
     def delete_point(self):
-        """删除选中点"""
+        """Delete selected point"""
         if self.selected_point_id is not None:
-            if messagebox.askyesno("确认", "确定删除此点?"):
+            if messagebox.askyesno("Confirm", "Are you sure to delete this point?"):
                 self.calibration_points.pop(self.selected_point_id)
                 self.update_points_list()
                 self.update_button_states()
                 self.homography_matrix = None
                 
-                self.log_message(f"删除点 #{self.selected_point_id+1}")
+                self.log_message(f"Deleted point #{self.selected_point_id+1}")
                 self.selected_point_id = None
                 self.edit_btn.config(state=tk.DISABLED)
                 self.delete_btn.config(state=tk.DISABLED)
     
     def clear_points(self):
-        """清空所有点"""
+        """Clear all points"""
         if self.calibration_points:
-            if messagebox.askyesno("确认", "确定清空所有点?"):
+            if messagebox.askyesno("Confirm", "Are you sure to clear all points?"):
                 self.calibration_points.clear()
                 self.update_points_list()
                 self.update_button_states()
                 self.homography_matrix = None
-                self.log_message("已清空所有标定点")
+                self.log_message("Cleared all calibration points")
     
     def update_button_states(self):
-        """更新按钮状态"""
+        """Update button states"""
         valid_points = sum(1 for p in self.calibration_points if p.get('world'))
         
-        # 计算按钮
+        # Calculate button
         if valid_points >= 4:
             self.calc_btn.config(state=tk.NORMAL)
         else:
             self.calc_btn.config(state=tk.DISABLED)
         
-        # 其他按钮
+        # Other buttons
         if self.homography_matrix is not None:
             self.save_btn.config(state=tk.NORMAL)
             self.verify_check.config(state=tk.NORMAL)
@@ -768,7 +768,7 @@ class HomographyCalibrator:
             self.grid_check.config(state=tk.DISABLED)
     
     def calculate_homography(self):
-        """计算Homography矩阵"""
+        """Calculate Homography matrix"""
         src_points = []
         dst_points = []
         
@@ -778,7 +778,7 @@ class HomographyCalibrator:
                 dst_points.append(point['world'])
         
         if len(src_points) < 4:
-            messagebox.showwarning("警告", "至少需要4个有效点")
+            messagebox.showwarning("Warning", "At least 4 valid points required")
             return
         
         try:
@@ -794,26 +794,26 @@ class HomographyCalibrator:
                 
                 matrix_str = np.array2string(self.homography_matrix,
                                            precision=6, suppress_small=True)
-                self.log_message(f"Homography矩阵计算成功:\n{matrix_str}")
+                self.log_message(f"Homography matrix calculation successful:\n{matrix_str}")
                 
-                messagebox.showinfo("成功", "矩阵计算完成!\n可以启用验证模式测试")
+                messagebox.showinfo("Success", "Matrix calculation completed!\nYou can enable verification mode to test")
             else:
-                messagebox.showerror("错误", "矩阵计算失败")
+                messagebox.showerror("Error", "Matrix calculation failed")
                 
         except Exception as e:
-            messagebox.showerror("错误", f"计算失败: {e}")
+            messagebox.showerror("Error", f"Calculation failed: {e}")
     
     def save_calibration(self):
-        """保存标定数据"""
+        """Save calibration data"""
         if not self.calibration_points or self.homography_matrix is None:
-            messagebox.showwarning("警告", "没有数据可保存")
+            messagebox.showwarning("Warning", "No data to save")
             return
         
         try:
             from tkinter import filedialog
             
             filename = filedialog.asksaveasfilename(
-                title="保存标定",
+                title="Save Calibration",
                 defaultextension=".json",
                 filetypes=[("JSON files", "*.json")]
             )
@@ -829,19 +829,19 @@ class HomographyCalibrator:
                 with open(filename, 'w') as f:
                     json.dump(data, f, indent=4)
                 
-                messagebox.showinfo("成功", f"数据已保存:\n{filename}")
-                self.log_message(f"标定数据已保存: {filename}")
+                messagebox.showinfo("Success", f"Data saved to:\n{filename}")
+                self.log_message(f"Calibration data saved: {filename}")
                 
         except Exception as e:
-            messagebox.showerror("错误", f"保存失败: {e}")
+            messagebox.showerror("Error", f"Save failed: {e}")
     
     def load_calibration(self):
-        """加载标定数据"""
+        """Load calibration data"""
         try:
             from tkinter import filedialog
             
             filename = filedialog.askopenfilename(
-                title="加载标定",
+                title="Load Calibration",
                 filetypes=[("JSON files", "*.json")]
             )
             
@@ -855,32 +855,32 @@ class HomographyCalibrator:
                 self.update_points_list()
                 self.update_button_states()
                 
-                messagebox.showinfo("成功", f"数据已加载:\n{filename}")
-                self.log_message(f"标定数据已加载: {filename}")
+                messagebox.showinfo("Success", f"Data loaded from:\n{filename}")
+                self.log_message(f"Calibration data loaded: {filename}")
                 
         except Exception as e:
-            messagebox.showerror("错误", f"加载失败: {e}")
+            messagebox.showerror("Error", f"Load failed: {e}")
     
     def on_closing(self):
-        """关闭程序"""
+        """Close program"""
         self.stop_preview()
         self.root.destroy()
     
     def run(self):
-        """运行程序"""
-        print("启动主循环...")
+        """Run program"""
+        print("Starting main loop...")
         self.root.mainloop()
 
 
 def main():
-    """主函数"""
-    print("启动Homography标定工具...")
+    """Main function"""
+    print("Starting Homography calibration tool...")
     
     try:
         app = HomographyCalibrator()
         app.run()
     except Exception as e:
-        print(f"程序启动失败: {e}")
+        print(f"Program startup failed: {e}")
         import traceback
         traceback.print_exc()
         return 1
