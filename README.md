@@ -1,148 +1,134 @@
-# CameraTool_PY
+# 🎬 CameraTool_PY - 专业摄像头工具集
 
-专业的摄像头标定和录制工具集，支持篮球场地分析和双摄像头同步录制。
+**2分钟快速上手** | 双摄同步录制 | 智能静帧导出 | 篮球场地分析
 
-## 🛠️ 工具列表
+> 为篮球训练和科研数据采集打造的专业工具套件
 
-### 1. 双摄像头录制器 (`dual_camera_recorder.py`)
-- **功能**: 同步录制两个摄像头，支持实时预览
-- **特色**: 录制时保持预览、自动摄像头检测、静帧导出
-- **用途**: 篮球训练录制、多角度视频采集
+## ⚡ 一分钟快速开始
 
-### 2. 透视变换标定工具 (`homography_fixed.py`)
-- **功能**: 计算地面到像素平面的透视变换矩阵
-- **特色**: 图形化标定界面、验证功能
-- **用途**: 运动轨迹分析、场地坐标映射
-
-### 3. 相机内参标定工具 (`cameraCalib.py`)
-- **功能**: 标定相机内参数（焦距、畸变等）
-- **特色**: 棋盘格检测、自动标定流程
-- **用途**: 相机校正、精确测量
-
-### 4. 摄像头检测工具 (`test_camera_detection.py`)
-- **功能**: 检测系统中可用的摄像头设备
-- **特色**: 显示设备详细信息
-- **用途**: 设备调试、兼容性检查
-
-## 📋 系统要求
-
-- Python 3.7+
-- 支持Tkinter的Python环境
-- Linux系统（支持v4l2）
-- 摄像头设备
-
-## 🚀 快速安装
-
-### 1. 克隆项目
 ```bash
-git clone https://github.com/JoeFirmament/CameraTool_PY.git
-cd CameraTool_PY
-```
-
-### 2. 安装依赖
-```bash
-pip install -r requirements.txt
-# 或者手动安装
+# 克隆并运行（3步完成）
+git clone <repo> && cd CameraTool_PY
 pip install opencv-python numpy Pillow
+python3 dual_camera_recorder.py  # 🚀 立即开始录制！
 ```
 
-### 3. 安装系统依赖（Linux）
-```bash
-# Ubuntu/Debian
-sudo apt install v4l-utils
+## 🎯 核心功能概览
 
-# 或运行检测脚本
-chmod +x run_camera_tool.sh
-```
+| 工具 | 用途 | 特色功能 | 运行命令 |
+|------|------|----------|----------|
+| **双摄录制器** 📹 | 同步录制多角度视频 | • 自动检测摄像头<br>• 录制时实时预览<br>• 智能静帧导出<br>• 稳定设备路径管理 | `python3 dual_camera_recorder.py` |
+| **透视标定** 📐 | 场地坐标映射 | • 图形化标定界面<br>• 运动轨迹分析<br>• 统一摄像头管理 | `python3 homography.py` |
+| **相机校正** 🔧 | 消除镜头畸变 | • 棋盘格自动检测<br>• 精确测量校正 | `python3 camera_calibration.py` |
+| **设备检测** 🔍 | 摄像头兼容性测试 | • 显示设备详细信息<br>• by-id路径支持<br>• 排查连接问题 | `python3 test_camera_detection.py` |
 
-## 📖 使用说明
+## 📦 系统要求
 
-### 双摄像头录制器
+- **Python**: 3.7+ (支持Tkinter)
+- **系统**: Linux (推荐 Ubuntu/Debian)  
+- **硬件**: 2个USB摄像头
+- **依赖**: `sudo apt install v4l-utils` (Linux)
+
+## 🚀 双摄录制器详细操作
+
+### 快速开始（30秒上手）
 ```bash
 python3 dual_camera_recorder.py
 ```
-**功能操作**:
-1. 自动检测连接的摄像头
-2. 设置输出目录和录制参数
-3. 开始录制（预览界面保持开启）
-4. 停止录制后可导出静帧
 
-**文件输出**:
-- `camera1_recording.avi` - 摄像头1录制
-- `camera2_recording.avi` - 摄像头2录制  
-- `recording_info.json` - 录制信息
-- `frames_export_*/` - 导出的静帧（按摄像头分文件夹）
+### 📱 界面操作流程
+1. **自动检测**: 程序启动时自动识别摄像头
+2. **参数设置**: 选择输出目录，调整FPS（默认30）
+3. **开始录制**: 点击"● Start Recording"
+4. **实时预览**: 录制时可看到两个摄像头画面
+5. **停止录制**: 点击"■ Stop Recording"
+6. **导出静帧**: 点击"📸 Export Frames"
 
-### 透视变换标定
-```bash
-python3 homography_fixed.py
+### 📁 输出文件格式（更新后）
+
+录制完成后自动生成：
 ```
-**标定流程**:
-1. 加载标定图像
-2. 导入Label Studio JSON标注文件
-3. 为至少4个点输入世界坐标
-4. 计算Homography矩阵
-5. 使用Verify功能验证结果
+basketball_recording_20250123_143052/
+├── camera1_20250123_143052.avi      # 摄像头1视频（带时间戳）
+├── camera2_20250123_143052.avi      # 摄像头2视频（带时间戳）
+└── recording_info.json              # 录制信息
 
-### 相机内参标定
-```bash
-python3 cameraCalib.py
+导出静帧后：
+frames_export_20250123_143500_basketball_recording_20250123_143052/
+├── camera1/
+│   ├── camera1_20250123_143052_frame_000030_t1.00s.jpg
+│   └── camera1_20250123_143052_frame_000060_t2.00s.jpg
+└── camera2/
+    ├── camera2_20250123_143052_frame_000030_t1.00s.jpg
+    └── camera2_20250123_143052_frame_000060_t2.00s.jpg
 ```
-**标定流程**:
-1. 准备棋盘格标定板
-2. 从多个角度拍摄标定图像
-3. 程序自动检测棋盘格角点
-4. 计算相机内参和畸变系数
 
-### 摄像头检测
+> 💡 **命名规律**: `摄像头_日期时间_frame_帧数_t时间戳.jpg`
+
+### 🎛️ 高级功能
+
+- **智能摄像头检测**: 自动使用稳定的by-id设备路径，硬件重插后仍能识别
+- **手动选择摄像头**: 勾选"Manual camera selection"进行精确控制
+- **画面旋转**: 支持0°、90°、180°、270°旋转
+- **分辨率调整**: 支持多种分辨率（自动检测摄像头支持，显示FPS信息）
+- **静帧间隔**: 可设置每N帧导出一张图片
+- **设备路径显示**: 界面显示by-id和/dev/videoX对应关系，便于理解
+
+## 🛠️ 其他工具快速参考
+
+### 透视变换标定 (`homography.py`)
+**用途**: 建立篮球场地坐标系，分析球员位置轨迹
 ```bash
-python3 test_camera_detection.py
+python3 homography.py
+# 1. 加载场地图像 → 2. 导入JSON标注 → 3. 输入坐标 → 4. 验证结果
 ```
-查看系统中所有可用摄像头的详细信息。
 
-## 🎯 典型使用场景
+### 相机校正 (`camera_calibration.py`) 
+**用途**: 消除镜头畸变，提高测量精度
+```bash
+python3 camera_calibration.py
+# 1. 准备棋盘格 → 2. 多角度拍摄 → 3. 自动检测 → 4. 计算参数
+```
 
-### 篮球训练分析
-1. 使用双摄像头录制器同步录制比赛
-2. 用透视变换标定工具建立场地坐标系
-3. 分析球员运动轨迹和位置数据
+### 设备检测 (`test_camera_detection.py`)
+**用途**: 检查摄像头兼容性，显示稳定设备路径
+```bash
+python3 test_camera_detection.py  # 显示by-id路径、分辨率、FPS等详细信息
 
-### 科研数据采集
-1. 相机内参标定确保测量精度
-2. 双摄像头提供立体视觉数据
-3. 导出静帧进行详细分析
+# 或者直接测试camera_utils模块
+python3 -c "from camera_utils import CameraManager; CameraManager.test_camera_detection()"
+```
 
-## ⚠️ 注意事项
+## 🚨 常见问题速查
 
-- 确保Python环境支持Tkinter图形界面
-- Linux系统需要安装v4l-utils支持
-- 双摄像头录制需要足够的USB带宽
-- 导出静帧功能需要完整的视频文件
+| 问题 | 解决方案 |
+|------|----------|
+| 😵 摄像头检测失败 | `sudo apt install v4l-utils`<br>`ls -la /dev/video*` 检查权限<br>运行 `python3 test_camera_detection.py` 诊断 |
+| 🔄 画面旋转错误 | 使用界面中的"旋转"选项调整 |
+| 📷 预览画面黑屏 | 检查摄像头被其他程序占用<br>查看控制台输出的设备路径尝试信息 |
+| 💾 导出静帧失败 | 确认视频文件完整，检查输出目录权限 |
+| 🐌 录制卡顿 | 降低分辨率或FPS，检查USB带宽 |
+| 🔌 设备路径变化 | 新版本使用by-id稳定路径，硬件重插后自动适配 |
 
-## 🔧 故障排除
+## 🎯 使用场景示例
 
-**摄像头无法检测**:
-- 检查设备权限：`ls -la /dev/video*`
-- 安装v4l2工具：`sudo apt install v4l-utils`
-
-**录制画面旋转**:
-- 检查摄像头物理安装方向
-- 确保视频文件完整录制
-
-**静帧导出失败**:
-- 确认AVI文件未损坏
-- 检查输出目录权限
-
-## 📄 文件说明
-
-- `dual_camera_recorder.py` - 主要录制工具
-- `homography_fixed.py` - 透视变换标定
-- `cameraCalib.py` - 相机内参标定  
-- `test_camera_detection.py` - 设备检测
-- `requirements.txt` - Python依赖
-- `run_camera_tool.sh` - 启动脚本
+- **🏀 篮球训练**: 双角度同步录制 → 战术分析 → 静帧导出关键动作
+- **🔬 科研数据**: 校正镜头畸变 → 精确测量 → 立体视觉重建  
+- **📊 运动分析**: 场地标定 → 轨迹追踪 → 数据可视化
 
 ---
 
-**项目作者**: JoeFirmament  
-**更新时间**: 2025年7月
+## 📝 快速备忘
+
+```bash
+# 最常用命令
+python3 dual_camera_recorder.py          # 🎬 开始录制
+python3 test_camera_detection.py         # 🔍 检测摄像头
+pip install opencv-python numpy Pillow   # 📦 安装依赖
+sudo apt install v4l-utils              # 🔧 Linux支持
+```
+
+**💡 小贴士**: 首次使用建议先运行设备检测，确认摄像头正常后再开始录制
+
+---
+*最后更新: 2025年8月 | 统一摄像头管理模块 | 稳定设备路径支持 | by-id路径自动识别*

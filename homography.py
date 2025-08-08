@@ -24,24 +24,37 @@ import subprocess
 import re
 import json
 from datetime import datetime
+from camera_utils import CameraManager, open_camera_with_fallback
 
 class HomographyCalibrator:
     def __init__(self):
         print("Initializing Homography calibration tool...")
         
-        # Create main window with safest configuration
+        # Create main window with modern configuration
         self.root = tk.Tk()
         
         # Set window properties
-        self.root.title("Homography Calibrator")
+        self.root.title("Basketball Court Calibration Studio")
         self.root.geometry("1200x800")
+        self.root.minsize(1000, 700)
+        self.root.configure(bg='#f8f9fa')
         
-        # Disable some features that might cause issues
-        try:
-            self.root.option_add('*tearOff', False)
-            # Don't set font options, let system choose automatically
-        except:
-            pass
+        # Modern color scheme (same as dual_camera_recorder)
+        self.colors = {
+            'bg': '#f8f9fa',
+            'card': '#ffffff',
+            'primary': '#007bff',
+            'success': '#28a745',
+            'danger': '#dc3545',
+            'warning': '#ffc107',
+            'text': '#212529',
+            'text_muted': '#6c757d',
+            'border': '#dee2e6',
+            'shadow': '#00000010'
+        }
+        
+        # Configure modern styles
+        self.configure_styles()
         
         print("Main window created successfully")
         
@@ -54,7 +67,65 @@ class HomographyCalibrator:
         # Bind events
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        print("Program initialization completed")
+        print("Modern UI initialization completed")
+    
+    def configure_styles(self):
+        """Configure modern ttk styles matching dual_camera_recorder"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        # Configure card style
+        style.configure('Card.TFrame', 
+                       background=self.colors['card'],
+                       relief='flat',
+                       borderwidth=1)
+        
+        # Configure title style (no fonts to avoid X11 issues)
+        style.configure('Title.TLabel',
+                       background=self.colors['bg'],
+                       foreground=self.colors['text'])
+        
+        # Configure section title style
+        style.configure('SectionTitle.TLabel',
+                       background=self.colors['card'],
+                       foreground=self.colors['text'])
+        
+        # Configure device info style
+        style.configure('DeviceInfo.TLabel',
+                       background=self.colors['card'],
+                       foreground=self.colors['text'])
+        
+        # Configure modern buttons
+        style.configure('Primary.TButton',
+                       foreground='white',
+                       background=self.colors['primary'],
+                       borderwidth=0,
+                       focuscolor='none',
+                       padding=(12, 6))
+        
+        style.configure('Success.TButton',
+                       foreground='white',
+                       background=self.colors['success'],
+                       borderwidth=0,
+                       focuscolor='none',
+                       padding=(15, 6))
+        
+        style.configure('Danger.TButton',
+                       foreground='white',
+                       background=self.colors['danger'],
+                       borderwidth=0,
+                       focuscolor='none',
+                       padding=(15, 6))
+        
+        # Configure modern combobox
+        style.configure('Modern.TCombobox',
+                       fieldbackground=self.colors['card'],
+                       borderwidth=1,
+                       relief='solid',
+                       bordercolor=self.colors['border'],
+                       arrowcolor=self.colors['text'])
+        
+        print("Modern styles configured")
     
     def init_data(self):
         """Initialize data members"""
@@ -80,9 +151,9 @@ class HomographyCalibrator:
         """Create user interface"""
         print("Creating user interface...")
         
-        # Main container
-        main_container = tk.Frame(self.root)
-        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Main container with modern styling
+        main_container = tk.Frame(self.root, bg=self.colors['bg'])
+        main_container.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
         
         # Left: preview area
         self.create_preview_area(main_container)
@@ -113,9 +184,10 @@ class HomographyCalibrator:
         control_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         control_frame.pack_propagate(False)
         
-        # Title - no font specification
-        title_label = tk.Label(control_frame, text="Homography Calibration Tool", bg='white')
-        title_label.pack(pady=10)
+        # Modern title
+        title_label = ttk.Label(control_frame, text="Basketball Court Calibration", 
+                              style='Title.TLabel')
+        title_label.pack(pady=(0, 15))
         
         # Various control areas
         self.create_camera_section(control_frame)
@@ -125,74 +197,135 @@ class HomographyCalibrator:
         self.create_status_section(control_frame)
     
     def create_camera_section(self, parent):
-        """Create camera control area"""
-        section = tk.LabelFrame(parent, text="Camera Control", bg='white')
+        """Create modern camera control area"""
+        # Create card-style frame
+        section = tk.Frame(parent, bg=self.colors['card'], 
+                          relief='flat', bd=1)
+        section.configure(highlightbackground=self.colors['border'], 
+                         highlightthickness=1)
         section.pack(fill=tk.X, padx=10, pady=5)
         
-        # Device path
-        tk.Label(section, text="Device:", bg='white').pack(anchor=tk.W, padx=5)
-        self.device_var = tk.StringVar(value="/dev/video0")
-        device_entry = tk.Entry(section, textvariable=self.device_var)
-        device_entry.pack(fill=tk.X, padx=5, pady=2)
+        # Section title
+        section_title = ttk.Label(section, text="Camera Control", 
+                                style='SectionTitle.TLabel')
+        section_title.pack(anchor='w', padx=15, pady=(10, 5))
         
-        # Detect resolution button
-        detect_btn = tk.Button(section, text="Detect Resolution", 
-                              command=self.detect_resolutions)
-        detect_btn.pack(fill=tk.X, padx=5, pady=2)
+        # Auto-detect cameras button
+        detect_cameras_btn = ttk.Button(section, text="Auto-Detect Cameras", 
+                                       command=self.auto_detect_cameras,
+                                       style='Success.TButton')
+        detect_cameras_btn.pack(fill=tk.X, padx=15, pady=(5, 10))
+        
+        # Device selection (dropdown instead of text entry)
+        device_label = ttk.Label(section, text="Select Camera:", 
+                               style='DeviceInfo.TLabel')
+        device_label.pack(anchor=tk.W, padx=15, pady=(0, 5))
+        
+        self.device_var = tk.StringVar()
+        self.device_combo = ttk.Combobox(section, textvariable=self.device_var,
+                                        state='readonly', style='Modern.TCombobox')
+        self.device_combo.pack(fill=tk.X, padx=15, pady=(0, 10))
+        self.device_combo.bind('<<ComboboxSelected>>', self.on_camera_selected)
         
         # Resolution selection
-        tk.Label(section, text="Resolution:", bg='white').pack(anchor=tk.W, padx=5)
+        res_label = ttk.Label(section, text="Resolution:", 
+                            style='DeviceInfo.TLabel')
+        res_label.pack(anchor=tk.W, padx=15, pady=(0, 5))
+        
         self.resolution_var = tk.StringVar()
         self.resolution_combo = ttk.Combobox(section, textvariable=self.resolution_var,
-                                           state='readonly')
-        self.resolution_combo.pack(fill=tk.X, padx=5, pady=2)
+                                           state='readonly', style='Modern.TCombobox')
+        self.resolution_combo.pack(fill=tk.X, padx=15, pady=(0, 10))
         
         # Preview control
-        self.preview_btn = tk.Button(section, text="Start Preview", 
-                                   command=self.toggle_preview,
-                                   state=tk.DISABLED)
-        self.preview_btn.pack(fill=tk.X, padx=5, pady=5)
+        self.preview_btn = ttk.Button(section, text="Start Preview", 
+                                    command=self.toggle_preview,
+                                    style='Primary.TButton',
+                                    state=tk.DISABLED)
+        self.preview_btn.pack(fill=tk.X, padx=15, pady=(0, 10))
+        
+        # Save current frame button
+        self.save_frame_btn = ttk.Button(section, text="Save Current Frame", 
+                                       command=self.save_current_frame,
+                                       style='Success.TButton',
+                                       state=tk.DISABLED)
+        self.save_frame_btn.pack(fill=tk.X, padx=15, pady=(0, 15))
+        
+        # Initialize camera detection
+        self.cameras = []
+        self.available_resolutions = {}
+        
+        # Auto-detect cameras on startup
+        self.root.after(500, self.auto_detect_cameras)  # Delay to let GUI finish loading
     
     def create_calibration_section(self, parent):
-        """Create calibration control area"""
-        section = tk.LabelFrame(parent, text="Calibration Control", bg='white')
+        """Create modern calibration control area"""
+        # Create card-style frame
+        section = tk.Frame(parent, bg=self.colors['card'], 
+                          relief='flat', bd=1)
+        section.configure(highlightbackground=self.colors['border'], 
+                         highlightthickness=1)
         section.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Section title
+        section_title = ttk.Label(section, text="Calibration Control", 
+                                style='SectionTitle.TLabel')
+        section_title.pack(anchor='w', padx=15, pady=(10, 5))
         
         # Calibration mode
         self.calib_mode_var = tk.BooleanVar()
         calib_check = tk.Checkbutton(section, text="Calibration Mode (click to add points)",
                                    variable=self.calib_mode_var,
                                    command=self.toggle_calibration_mode,
-                                   bg='white')
-        calib_check.pack(anchor=tk.W, padx=5, pady=2)
+                                   bg=self.colors['card'],
+                                   fg=self.colors['text'])
+        calib_check.pack(anchor=tk.W, padx=15, pady=5)
         
         # Verification mode
         self.verify_mode_var = tk.BooleanVar()
         self.verify_check = tk.Checkbutton(section, text="Verification Mode (click to view coordinates)",
                                          variable=self.verify_mode_var,
                                          command=self.toggle_verification_mode,
-                                         bg='white', state=tk.DISABLED)
-        self.verify_check.pack(anchor=tk.W, padx=5, pady=2)
+                                         bg=self.colors['card'],
+                                         fg=self.colors['text'],
+                                         state=tk.DISABLED)
+        self.verify_check.pack(anchor=tk.W, padx=15, pady=5)
         
         # Show Y-axis 5-10m verification points (both sides)
         self.grid_var = tk.BooleanVar()
         self.grid_check = tk.Checkbutton(section, text="Show Y-axis 5-10m verification points (both sides)",
                                        variable=self.grid_var,
                                        command=self.toggle_grid,
-                                       bg='white', state=tk.DISABLED)
-        self.grid_check.pack(anchor=tk.W, padx=5, pady=2)
+                                       bg=self.colors['card'],
+                                       fg=self.colors['text'],
+                                       font=('SF Pro Text', 10),
+                                       state=tk.DISABLED)
+        self.grid_check.pack(anchor=tk.W, padx=15, pady=(5, 15))
     
     def create_points_section(self, parent):
-        """Create points management area"""
-        section = tk.LabelFrame(parent, text="Calibration Points Management", bg='white')
+        """Create modern points management area"""
+        # Create card-style frame
+        section = tk.Frame(parent, bg=self.colors['card'], 
+                          relief='flat', bd=1)
+        section.configure(highlightbackground=self.colors['border'], 
+                         highlightthickness=1)
         section.pack(fill=tk.X, padx=10, pady=5)
         
-        # Points list
-        list_frame = tk.Frame(section, bg='white')
-        list_frame.pack(fill=tk.BOTH, expand=True)
+        # Section title
+        section_title = ttk.Label(section, text="Calibration Points Management", 
+                                style='SectionTitle.TLabel')
+        section_title.pack(anchor='w', padx=15, pady=(10, 5))
         
-        self.points_listbox = tk.Listbox(list_frame, height=6, width=30)
-        self.points_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+        # Points list
+        list_frame = tk.Frame(section, bg=self.colors['card'])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=15)
+        
+        self.points_listbox = tk.Listbox(list_frame, height=6, width=30,
+                                       bg=self.colors['card'],
+                                       fg=self.colors['text'],
+                                       selectbackground=self.colors['primary'],
+                                       font=('SF Pro Text', 10))
+        self.points_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.points_listbox.bind('<<ListboxSelect>>', self.on_point_select)
         
         scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
@@ -201,54 +334,102 @@ class HomographyCalibrator:
         scrollbar.config(command=self.points_listbox.yview)
         
         # Operation buttons
-        btn_frame = tk.Frame(section, bg='white')
-        btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        btn_frame = tk.Frame(section, bg=self.colors['card'])
+        btn_frame.pack(fill=tk.X, padx=15, pady=(5, 15))
         
-        self.edit_btn = tk.Button(btn_frame, text="Edit", 
-                                command=self.edit_point, state=tk.DISABLED)
-        self.edit_btn.pack(side=tk.LEFT, padx=2)
+        self.edit_btn = ttk.Button(btn_frame, text="Edit", 
+                                 command=self.edit_point, 
+                                 style='Primary.TButton',
+                                 state=tk.DISABLED)
+        self.edit_btn.pack(side=tk.LEFT, padx=(0, 10))
         
-        self.delete_btn = tk.Button(btn_frame, text="Delete", 
-                                  command=self.delete_point, state=tk.DISABLED)
-        self.delete_btn.pack(side=tk.LEFT, padx=2)
+        self.delete_btn = ttk.Button(btn_frame, text="Delete", 
+                                   command=self.delete_point, 
+                                   style='Danger.TButton',
+                                   state=tk.DISABLED)
+        self.delete_btn.pack(side=tk.LEFT, padx=(0, 10))
         
-        clear_btn = tk.Button(btn_frame, text="Clear", command=self.clear_points)
-        clear_btn.pack(side=tk.RIGHT, padx=2)
+        clear_btn = ttk.Button(btn_frame, text="Clear All", 
+                             command=self.clear_points,
+                             style='Danger.TButton')
+        clear_btn.pack(side=tk.RIGHT)
     
     def create_calculation_section(self, parent):
-        """Create calculation area"""
-        section = tk.LabelFrame(parent, text="Matrix Calculation", bg='white')
+        """Create modern calculation area"""
+        # Create card-style frame
+        section = tk.Frame(parent, bg=self.colors['card'], 
+                          relief='flat', bd=1)
+        section.configure(highlightbackground=self.colors['border'], 
+                         highlightthickness=1)
         section.pack(fill=tk.X, padx=10, pady=5)
         
+        # Section title
+        section_title = ttk.Label(section, text="Matrix Calculation", 
+                                style='SectionTitle.TLabel')
+        section_title.pack(anchor='w', padx=15, pady=(10, 5))
+        
         # Calculate button
-        self.calc_btn = tk.Button(section, text="Calculate Homography Matrix",
-                                command=self.calculate_homography,
-                                state=tk.DISABLED)
-        self.calc_btn.pack(fill=tk.X, padx=5, pady=5)
+        self.calc_btn = ttk.Button(section, text="Calculate Homography Matrix",
+                                 command=self.calculate_homography,
+                                 style='Success.TButton',
+                                 state=tk.DISABLED)
+        self.calc_btn.pack(fill=tk.X, padx=15, pady=(5, 10))
         
         # Save and load buttons
-        file_frame = tk.Frame(section, bg='white')
-        file_frame.pack(fill=tk.X, padx=5, pady=2)
+        file_frame = tk.Frame(section, bg=self.colors['card'])
+        file_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
         
-        self.save_btn = tk.Button(file_frame, text="Save",
-                                command=self.save_calibration,
-                                state=tk.DISABLED)
-        self.save_btn.pack(side=tk.LEFT, padx=2)
+        self.save_btn = ttk.Button(file_frame, text="Save",
+                                 command=self.save_calibration,
+                                 style='Success.TButton',
+                                 state=tk.DISABLED)
+        self.save_btn.pack(side=tk.LEFT, padx=(0, 10))
         
-        load_btn = tk.Button(file_frame, text="Load",
-                           command=self.load_calibration)
-        load_btn.pack(side=tk.RIGHT, padx=2)
+        load_btn = ttk.Button(file_frame, text="Load",
+                            command=self.load_calibration,
+                            style='Primary.TButton')
+        load_btn.pack(side=tk.RIGHT)
     
     def create_status_section(self, parent):
-        """Create status display area"""
-        section = tk.LabelFrame(parent, text="Status Information", bg='white')
+        """Create modern status display area"""
+        # Create card-style frame
+        section = tk.Frame(parent, bg=self.colors['card'], 
+                          relief='flat', bd=1)
+        section.configure(highlightbackground=self.colors['border'], 
+                         highlightthickness=1)
         section.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        self.status_text = tk.Text(section, height=8, wrap=tk.WORD, 
-                                 state=tk.DISABLED, bg='white')
-        self.status_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Section title
+        section_title = ttk.Label(section, text="Status Information", 
+                                style='SectionTitle.TLabel')
+        section_title.pack(anchor='w', padx=15, pady=(10, 5))
         
-        self.log_message("Program started, please detect camera resolution first")
+        self.status_text = tk.Text(section, height=8, wrap=tk.WORD, 
+                                 state=tk.DISABLED,
+                                 bg=self.colors['card'],
+                                 fg=self.colors['text'],
+                                 font=('SF Pro Text', 10),
+                                 relief='flat',
+                                 borderwidth=1,
+                                 highlightbackground=self.colors['border'])
+        self.status_text.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 15))
+        
+        self.log_message("Basketball Court Calibration Studio started, auto-detecting cameras...")
+    
+    def parse_resolution(self, resolution_string):
+        """Parse resolution string to width, height tuple"""
+        try:
+            # Handle both formats: "1920x1080" and "1920x1080 @30fps"
+            if ' @' in resolution_string:
+                # Extract resolution part before FPS info
+                resolution_part = resolution_string.split(' @')[0]
+            else:
+                resolution_part = resolution_string
+                
+            width, height = map(int, resolution_part.split('x'))
+            return width, height
+        except:
+            return 1920, 1080
     
     def log_message(self, message):
         """Add log message"""
@@ -262,55 +443,72 @@ class HomographyCalibrator:
         
         print(f"LOG: {message}")
     
-    def detect_resolutions(self):
-        """Detect camera resolutions"""
-        device = self.device_var.get()
-        if not device:
-            messagebox.showerror("Error", "Please enter device path")
-            return
-        
+    def auto_detect_cameras(self):
+        """Auto-detect available cameras using camera_utils"""
         try:
-            self.log_message(f"Detecting resolutions for device {device}...")
+            self.log_message("Auto-detecting cameras...")
             
-            result = subprocess.run(
-                ["v4l2-ctl", "--device", device, "--list-formats-ext"],
-                capture_output=True, text=True, check=True, timeout=10
-            )
+            # Use the unified camera detection
+            self.cameras = CameraManager.detect_cameras()
             
-            resolutions = set()
-            for line in result.stdout.splitlines():
-                if "Size: Discrete" in line:
-                    match = re.search(r'(\d+x\d+)', line)
-                    if match:
-                        resolutions.add(match.group(1))
-            
-            if resolutions:
-                res_list = sorted(list(resolutions), key=lambda x: int(x.split('x')[0]))
-                self.resolution_combo['values'] = res_list
+            if self.cameras:
+                # Update camera dropdown
+                camera_options = []
+                self.available_resolutions = {}
                 
-                # Set default resolution
-                if "1920x1080" in res_list:
-                    self.resolution_var.set("1920x1080")
-                elif "1280x720" in res_list:
-                    self.resolution_var.set("1280x720")
-                else:
-                    self.resolution_var.set(res_list[0])
+                for camera in self.cameras:
+                    display_name = camera.get_display_name()
+                    camera_options.append(display_name)
+                    
+                    # Store resolutions with display info
+                    resolution_displays = [res['display'] for res in camera.resolutions]
+                    self.available_resolutions[display_name] = resolution_displays
                 
-                self.preview_btn.config(state=tk.NORMAL)
-                self.log_message(f"Detected {len(res_list)} resolutions: {', '.join(res_list)}")
+                self.device_combo['values'] = camera_options
+                
+                # Select first camera by default
+                if camera_options:
+                    self.device_var.set(camera_options[0])
+                    self.on_camera_selected(None)  # Trigger resolution update
+                
+                self.log_message(f"Detected {len(self.cameras)} cameras successfully")
             else:
-                messagebox.showerror("Error", "No supported resolutions detected")
-                self.log_message("No supported resolutions detected")
+                messagebox.showwarning("Warning", "No cameras detected")
+                self.log_message("No cameras detected")
                 
-        except subprocess.TimeoutExpired:
-            messagebox.showerror("Error", "Detection timeout")
-            self.log_message("Resolution detection timeout")
-        except subprocess.CalledProcessError as e:
-            messagebox.showerror("Error", f"Cannot access device: {e}")
-            self.log_message(f"Device access failed: {e}")
         except Exception as e:
-            messagebox.showerror("Error", f"Detection failed: {e}")
-            self.log_message(f"Detection failed: {e}")
+            messagebox.showerror("Error", f"Camera detection failed: {e}")
+            self.log_message(f"Camera detection failed: {e}")
+    
+    def on_camera_selected(self, event):
+        """Handle camera selection change"""
+        selected_camera = self.device_var.get()
+        if selected_camera and selected_camera in self.available_resolutions:
+            resolutions = self.available_resolutions[selected_camera]
+            self.resolution_combo['values'] = resolutions
+            
+            # Set default resolution - prefer 1080p
+            default_resolution = None
+            for res in resolutions:
+                if "1920x1080" in res:
+                    default_resolution = res
+                    break
+                elif "1280x720" in res:
+                    default_resolution = res
+            
+            if default_resolution:
+                self.resolution_var.set(default_resolution)
+            elif resolutions:
+                self.resolution_var.set(resolutions[0])
+            
+            # Enable preview button
+            self.preview_btn.config(state=tk.NORMAL)
+            
+            self.log_message(f"Selected camera: {selected_camera}")
+            self.log_message(f"Available resolutions: {len(resolutions)}")
+        else:
+            self.resolution_combo['values'] = []
+            self.preview_btn.config(state=tk.DISABLED)
     
     def toggle_preview(self):
         """Toggle preview status"""
@@ -320,7 +518,7 @@ class HomographyCalibrator:
             self.start_preview()
     
     def start_preview(self):
-        """Start preview"""
+        """Start preview using camera_utils module"""
         device = self.device_var.get()
         resolution = self.resolution_var.get()
         
@@ -329,23 +527,39 @@ class HomographyCalibrator:
             return
         
         try:
-            width, height = map(int, resolution.split('x'))
+            # Parse resolution (handle FPS info if present)
+            width, height = self.parse_resolution(resolution)
             
-            self.cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
-            if not self.cap.isOpened():
+            # Find the selected camera device
+            selected_camera = None
+            for camera in self.cameras:
+                if camera.get_display_name() == device:
+                    selected_camera = camera
+                    break
+            
+            if not selected_camera:
+                raise Exception(f"Selected camera not found: {device}")
+            
+            # Use the unified camera opening method
+            self.cap = open_camera_with_fallback(selected_camera)
+            if not self.cap or not self.cap.isOpened():
                 raise Exception("Cannot open camera")
             
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             
             self.is_previewing = True
             self.preview_btn.config(text="Stop Preview")
+            self.save_frame_btn.config(state=tk.NORMAL)  # Enable save button
             
             # Start preview thread
             self.preview_thread = threading.Thread(target=self.preview_loop, daemon=True)
             self.preview_thread.start()
             
             self.log_message(f"Preview started: {resolution}")
+            self.log_message(f"Using camera path: {selected_camera.get_primary_path()}")
             self.canvas_status.config(text=f"Previewing: {resolution}")
             
         except Exception as e:
@@ -363,6 +577,7 @@ class HomographyCalibrator:
         
         self.current_frame = None
         self.preview_btn.config(text="Start Preview")
+        self.save_frame_btn.config(state=tk.DISABLED)  # Disable save button
         self.canvas.delete("all")
         
         self.log_message("Preview stopped")
@@ -861,6 +1076,51 @@ class HomographyCalibrator:
         except Exception as e:
             messagebox.showerror("Error", f"Load failed: {e}")
     
+    def save_current_frame(self):
+        """Save current frame with overlay to file"""
+        if self.current_frame is None:
+            messagebox.showwarning("Warning", "No frame available to save")
+            return
+        
+        try:
+            from tkinter import filedialog
+            import os
+            from datetime import datetime
+            
+            # Generate default filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"homography_frame_{timestamp}.jpg"
+            
+            # Ask user for save location
+            filename = filedialog.asksaveasfilename(
+                title="Save Current Frame",
+                defaultextension=".jpg",
+                initialfile=default_filename,
+                filetypes=[
+                    ("JPEG files", "*.jpg"),
+                    ("PNG files", "*.png"),
+                    ("All files", "*.*")
+                ]
+            )
+            
+            if filename:
+                # Create a copy of current frame and draw overlay
+                save_frame = self.current_frame.copy()
+                self.draw_overlay(save_frame)
+                
+                # Save the frame
+                success = cv2.imwrite(filename, save_frame)
+                
+                if success:
+                    messagebox.showinfo("Success", f"Frame saved to:\\n{filename}")
+                    self.log_message(f"Frame saved: {os.path.basename(filename)}")
+                else:
+                    raise Exception("Failed to write image file")
+                    
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save frame: {e}")
+            self.log_message(f"Frame save failed: {e}")
+
     def on_closing(self):
         """Close program"""
         self.stop_preview()

@@ -19,6 +19,7 @@ import json
 from PIL import Image, ImageTk
 import numpy as np
 import queue
+from camera_utils import CameraManager, CameraDevice, open_camera_with_fallback
 
 
 class ModernDualCameraRecorder:
@@ -47,6 +48,7 @@ class ModernDualCameraRecorder:
         self.recording = False
         self.start_time = None
         self.record_duration = 0
+        self.recording_timestamp = None  # Store timestamp for consistent file naming
         
         # Camera objects
         self.camera1 = None
@@ -423,12 +425,14 @@ class ModernDualCameraRecorder:
                                                 style='Modern.TCombobox', 
                                                 state='readonly', width=25)
             self.resolution1_combo.pack(anchor='w')
+            self.resolution1_combo.bind('<<ComboboxSelected>>', lambda e: self.update_preview_resolution(0))
         else:
             self.resolution2_var = tk.StringVar(value="1920x1080")
             self.resolution2_combo = ttk.Combobox(manual_frame, textvariable=self.resolution2_var,
                                                 style='Modern.TCombobox', 
                                                 state='readonly', width=25)
             self.resolution2_combo.pack(anchor='w')
+            self.resolution2_combo.bind('<<ComboboxSelected>>', lambda e: self.update_preview_resolution(1))
         
         # Rotation selection
         rotation_label = ttk.Label(manual_frame, text="Rotation", 
@@ -495,95 +499,30 @@ class ModernDualCameraRecorder:
         
         return card
         
-    def get_camera_info_v4l2(self, device_path):
-        """Get camera information using v4l2-ctl"""
-        try:
-            # Get device info
-            cmd = ['v4l2-ctl', '-d', device_path, '--info']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            
-            if result.returncode == 0:
-                info = {}
-                for line in result.stdout.split('\n'):
-                    if 'Card type' in line:
-                        info['name'] = line.split(':', 1)[1].strip()
-                    elif 'Driver name' in line:
-                        info['driver'] = line.split(':', 1)[1].strip()
-                    elif 'Bus info' in line:
-                        info['bus'] = line.split(':', 1)[1].strip()
-                
-                return info
-            else:
-                return None
-                
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
-            return None
-            
-    def get_supported_resolutions_v4l2(self, device_path):
-        """Get supported resolutions using v4l2-ctl"""
-        try:
-            cmd = ['v4l2-ctl', '-d', device_path, '--list-formats-ext']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            
-            if result.returncode == 0:
-                resolutions = set()
-                current_format = None
-                
-                for line in result.stdout.split('\n'):
-                    if 'MJPG' in line or 'YUYV' in line:
-                        current_format = line.strip()
-                    elif 'Size:' in line and current_format:
-                        match = re.search(r'Size: Discrete (\d+)x(\d+)', line)
-                        if match:
-                            width, height = match.groups()
-                            resolutions.add(f"{width}x{height}")
-                
-                return sorted(list(resolutions), key=lambda x: int(x.split('x')[0]))
-            else:
-                return ["640x480", "1280x720", "1920x1080"]
-                
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
-            return ["640x480", "1280x720", "1920x1080"]
             
     def load_camera_info(self):
-        """Load camera information using v4l2-ctl"""
+        """Load camera information using camera_utils module"""
+        # Use the new unified camera detection
+        detected_cameras = CameraManager.detect_cameras()
+        
+        # Convert to the format expected by existing code
         self.camera_devices = []
         self.available_resolutions = {}
         
-        # Check for video devices
-        for i in range(10):
-            device_path = f"/dev/video{i}"
-            if os.path.exists(device_path):
-                # Get device info
-                info = self.get_camera_info_v4l2(device_path)
-                if info:
-                    device_name = info.get('name', f'Camera {i}')
-                    # Clean up device name (remove redundant parts)
-                    if ':' in device_name:
-                        # For "USB Camera: USB Camera" -> "USB Camera"
-                        # For "DECXIN  CAMERA: DECXIN  CAMERA" -> "DECXIN CAMERA"
-                        parts = device_name.split(':')
-                        if len(parts) == 2 and parts[0].strip() == parts[1].strip():
-                            device_name = parts[0].strip()
-                    # Format: Device Name - /dev/videoX
-                    display_name = f"{device_name} - {device_path}"
-                    
-                    # Get supported resolutions
-                    resolutions = self.get_supported_resolutions_v4l2(device_path)
-                    
-                    # Only add devices that can actually capture video (have resolutions)
-                    if resolutions and len(resolutions) > 0:
-                        self.camera_devices.append({
-                            'index': i,
-                            'path': device_path,
-                            'name': device_name,
-                            'display_name': display_name,
-                            'info': info,
-                            'resolutions': resolutions
-                        })
-                        
-                        self.available_resolutions[device_path] = resolutions
-                        print(f"Found camera: {device_name} at {device_path}")
+        for camera in detected_cameras:
+            device_dict = camera.to_dict()
+            self.camera_devices.append(device_dict)
+            
+            # Convert resolution format for backward compatibility
+            # Keep original order (largest first) but also provide display info
+            resolution_strings = [res['resolution'] for res in camera.resolutions]
+            resolution_with_fps = [res['display'] for res in camera.resolutions]
+            
+            # Store both formats for flexibility
+            self.available_resolutions[device_dict['path']] = resolution_strings
+            self.available_resolutions[device_dict['path'] + '_display'] = resolution_with_fps
+            
+            print(f"Found camera: {camera.name} at {camera.get_primary_path()}")
         
         # Update combo boxes
         device_list = [device['display_name'] for device in self.camera_devices]
@@ -660,6 +599,9 @@ class ModernDualCameraRecorder:
             self.device1_info.config(text=info1_text)
             self.device2_info.config(text="")
             
+            # 设置单摄像头模式的分辨率
+            self.resolution1_var.set("1920x1080")
+            
             self.detection_status.config(text="[!] Only 1 camera detected - need 2 for dual recording")
             
             # Start preview for camera 1 only
@@ -712,14 +654,31 @@ class ModernDualCameraRecorder:
                     break
             
             if device_path and device_path in self.available_resolutions:
-                resolutions = self.available_resolutions[device_path]
-                combo['values'] = resolutions
-                if resolutions:
-                    # Set default to 1080p if available, otherwise first resolution
-                    if "1920x1080" in resolutions:
-                        combo.set("1920x1080")
-                    else:
-                        combo.set(resolutions[0])
+                # Use display format with FPS info if available
+                display_key = device_path + '_display'
+                if display_key in self.available_resolutions:
+                    resolutions_display = self.available_resolutions[display_key]
+                    combo['values'] = resolutions_display
+                    if resolutions_display:
+                        # Set default to 1080p if available, otherwise first resolution
+                        default_resolution = None
+                        for res in resolutions_display:
+                            if "1920x1080" in res:
+                                default_resolution = res
+                                break
+                        if default_resolution:
+                            combo.set(default_resolution)
+                        else:
+                            combo.set(resolutions_display[0])
+                else:
+                    # Fallback to simple resolution strings
+                    resolutions = self.available_resolutions[device_path]
+                    combo['values'] = resolutions
+                    if resolutions:
+                        if "1920x1080" in resolutions:
+                            combo.set("1920x1080")
+                        else:
+                            combo.set(resolutions[0])
                         
     def update_device_info(self, camera_index):
         """Update device information display"""
@@ -849,16 +808,30 @@ class ModernDualCameraRecorder:
             self.root.after(100, self.update_shared_preview)
         
     def get_camera_index(self, device_display):
-        """Get camera index from display name"""
+        """Get camera path from display name with fallback support"""
         for device in self.camera_devices:
             if device['display_name'] == device_display:
-                return device['index']
-        return 0
+                # Return a tuple: (primary_path, fallback_path, use_by_id)
+                return {
+                    'primary': device['path'],
+                    'fallback': device.get('fallback_path', device['path']),
+                    'use_by_id': device.get('use_by_id', False),
+                    'index': device['index']
+                }
+        return {'primary': 0, 'fallback': 0, 'use_by_id': False, 'index': 0}
+    
         
     def parse_resolution(self, resolution_string):
         """Parse resolution string to width, height tuple"""
         try:
-            width, height = map(int, resolution_string.split('x'))
+            # Handle both formats: "1920x1080" and "1920x1080 @30fps"
+            if ' @' in resolution_string:
+                # Extract resolution part before FPS info
+                resolution_part = resolution_string.split(' @')[0]
+            else:
+                resolution_part = resolution_string
+                
+            width, height = map(int, resolution_part.split('x'))
             return width, height
         except:
             return 1920, 1080
@@ -870,23 +843,33 @@ class ModernDualCameraRecorder:
             if not self.camera1_var.get() or not self.camera2_var.get():
                 messagebox.showerror("Error", "Please select both cameras!")
                 return
-            cam1_index = self.get_camera_index(self.camera1_var.get())
-            cam2_index = self.get_camera_index(self.camera2_var.get())
+            cam1_info = self.get_camera_index(self.camera1_var.get())
+            cam2_info = self.get_camera_index(self.camera2_var.get())
         else:
             # Auto mode - use first two available cameras
             if len(self.camera_devices) < 2:
                 messagebox.showerror("Error", "Need at least 2 cameras for dual recording!")
                 return
-            cam1_index = self.camera_devices[0]['index']
-            cam2_index = self.camera_devices[1]['index']
+            cam1_info = {
+                'primary': self.camera_devices[0]['path'],
+                'fallback': self.camera_devices[0].get('fallback_path', self.camera_devices[0]['path']),
+                'use_by_id': self.camera_devices[0].get('use_by_id', False),
+                'index': self.camera_devices[0]['index']
+            }
+            cam2_info = {
+                'primary': self.camera_devices[1]['path'],
+                'fallback': self.camera_devices[1].get('fallback_path', self.camera_devices[1]['path']),
+                'use_by_id': self.camera_devices[1].get('use_by_id', False),
+                'index': self.camera_devices[1]['index']
+            }
             
         if not self.output_dir_var.get():
             messagebox.showerror("Error", "Please select output directory!")
             return
             
         # Create output directory with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.output_dir = os.path.join(self.output_dir_var.get(), f"basketball_recording_{timestamp}")
+        self.recording_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.output_dir = os.path.join(self.output_dir_var.get(), f"basketball_recording_{self.recording_timestamp}")
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Camera indices already determined above
@@ -902,9 +885,9 @@ class ModernDualCameraRecorder:
             # 停止当前预览（释放preview专用的摄像头）
             self.stop_preview()
             
-            # Initialize cameras with MJPEG backend (用于录制和共享预览)
-            self.camera1 = cv2.VideoCapture(cam1_index)
-            self.camera2 = cv2.VideoCapture(cam2_index)
+            # Initialize cameras with intelligent path selection (用于录制和共享预览)
+            self.camera1 = open_camera_with_fallback(cam1_info)
+            self.camera2 = open_camera_with_fallback(cam2_info)
             
             # Set MJPEG format for better performance
             self.camera1.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
@@ -927,10 +910,10 @@ class ModernDualCameraRecorder:
             if not self.camera1.isOpened() or not self.camera2.isOpened():
                 raise Exception("Failed to open cameras")
             
-            # Initialize video writers
+            # Initialize video writers with timestamp-based names
             fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-            video1_path = os.path.join(self.output_dir, "camera1_recording.avi")
-            video2_path = os.path.join(self.output_dir, "camera2_recording.avi")
+            video1_path = os.path.join(self.output_dir, f"camera1_{self.recording_timestamp}.avi")
+            video2_path = os.path.join(self.output_dir, f"camera2_{self.recording_timestamp}.avi")
             
             self.writer1 = cv2.VideoWriter(video1_path, fourcc, fps, (width1, height1))
             self.writer2 = cv2.VideoWriter(video2_path, fourcc, fps, (width2, height2))
@@ -1070,21 +1053,21 @@ class ModernDualCameraRecorder:
             
     def save_recording_info(self):
         """Save recording information to JSON file"""
-        if not self.output_dir or not self.start_time:
+        if not self.output_dir or not self.start_time or not self.recording_timestamp:
             return
-            
+        
         info = {
             "recording_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "duration": time.time() - self.start_time,
             "camera1": {
                 "device": self.camera1_var.get(),
                 "resolution": self.resolution1_var.get(),
-                "video_file": "camera1_recording.avi"
+                "video_file": f"camera1_{self.recording_timestamp}.avi"
             },
             "camera2": {
                 "device": self.camera2_var.get(),
                 "resolution": self.resolution2_var.get(),
-                "video_file": "camera2_recording.avi"
+                "video_file": f"camera2_{self.recording_timestamp}.avi"
             },
             "fps": int(self.fps_var.get()),
             "output_directory": self.output_dir
@@ -1101,7 +1084,7 @@ class ModernDualCameraRecorder:
         
         # 搜索当前工作目录和子目录中的视频文件
         search_dir = self.output_dir_var.get() if self.output_dir_var.get() else os.getcwd()
-        for root, dirs, files in os.walk(search_dir):
+        for root, _, files in os.walk(search_dir):
             for file in files:
                 if file.endswith(('.avi', '.mp4', '.mov', '.mkv')):
                     video_files.append(os.path.join(root, file))
@@ -1332,8 +1315,8 @@ class ModernDualCameraRecorder:
             max_extracts = total_frames // interval
             self.root.after(0, lambda: progress_bar.configure(maximum=max_extracts))
             
-            # 获取摄像头设备名（从文件夹信息中推断）
-            device_name = camera_name.lower().replace(" ", "_")
+            # 从视频文件名中提取基础名称（去掉扩展名）
+            video_basename = os.path.splitext(os.path.basename(video_path))[0]
             
             while True:
                 ret, frame = cap.read()
@@ -1343,7 +1326,8 @@ class ModernDualCameraRecorder:
                 # 每隔指定帧数提取一帧
                 if frame_count % interval == 0:
                     timestamp = frame_count / fps
-                    filename = f"{device_name}_frame_{frame_count:06d}_t{timestamp:.2f}s.jpg"
+                    # 使用视频文件名作为前缀，再加上帧数信息
+                    filename = f"{video_basename}_frame_{frame_count:06d}_t{timestamp:.2f}s.jpg"
                     output_path = os.path.join(output_dir, filename)
                     
                     # 保存帧并检查是否成功
@@ -1397,26 +1381,37 @@ class ModernDualCameraRecorder:
         try:
             device_index = self.camera_devices[camera_index]['index']
             
+            # 获取用户选择的分辨率
+            if camera_index == 0:
+                resolution_str = self.resolution1_var.get()
+            else:
+                resolution_str = self.resolution2_var.get()
+            
+            # 解析分辨率
+            width, height = self.parse_resolution(resolution_str) if resolution_str else (1920, 1080)
+            
             if camera_index == 0:
                 if self.preview_camera1:
                     self.preview_camera1.release()
                 self.preview_camera1 = cv2.VideoCapture(device_index)
                 if self.preview_camera1.isOpened():
-                    # 设置预览分辨率 - 使用1920x1080确保画面完整
-                    self.preview_camera1.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                    self.preview_camera1.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                    # 设置预览分辨率 - 使用用户选择的分辨率
+                    self.preview_camera1.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                    self.preview_camera1.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                     self.preview_camera1.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     self.preview_camera1.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    print(f"Camera 1 preview set to {width}x{height}")
             else:
                 if self.preview_camera2:
                     self.preview_camera2.release()
                 self.preview_camera2 = cv2.VideoCapture(device_index)
                 if self.preview_camera2.isOpened():
-                    # 设置预览分辨率 - 使用1920x1080确保画面完整
-                    self.preview_camera2.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                    self.preview_camera2.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                    # 设置预览分辨率 - 使用用户选择的分辨率
+                    self.preview_camera2.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                    self.preview_camera2.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                     self.preview_camera2.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     self.preview_camera2.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    print(f"Camera 2 preview set to {width}x{height}")
                     
         except Exception as e:
             print(f"Failed to initialize preview camera {camera_index}: {e}")
@@ -1434,8 +1429,14 @@ class ModernDualCameraRecorder:
                     # 转换为tkinter可显示的格式
                     frame1_rgb = cv2.cvtColor(frame1, cv2.COLOR_BGR2RGB)
                     frame1_pil = Image.fromarray(frame1_rgb)
-                    # 调整大小为1920x1080的等比预览尺寸
-                    frame1_pil = frame1_pil.resize((480, 270), Image.LANCZOS)  # 1920x1080的等比缩放
+                    # 动态调整预览尺寸以适应不同分辨率
+                    # 计算合适的预览尺寸（保持宽高比，最大不超过480x270）
+                    img_h, img_w = frame1.shape[:2]
+                    scale = min(480/img_w, 270/img_h)
+                    preview_w = int(img_w * scale)
+                    preview_h = int(img_h * scale)
+                    frame1_pil = frame1_pil.resize((preview_w, preview_h), Image.LANCZOS)
+                    # print(f"Camera 1: {img_w}x{img_h} -> {preview_w}x{preview_h}")  # 调试信息
                     frame1_tk = ImageTk.PhotoImage(frame1_pil)
                     
                     # 更新预览标签
@@ -1449,8 +1450,14 @@ class ModernDualCameraRecorder:
                     # 转换为tkinter可显示的格式
                     frame2_rgb = cv2.cvtColor(frame2, cv2.COLOR_BGR2RGB)
                     frame2_pil = Image.fromarray(frame2_rgb)
-                    # 调整大小为1920x1080的等比预览尺寸
-                    frame2_pil = frame2_pil.resize((480, 270), Image.LANCZOS)  # 1920x1080的等比缩放
+                    # 动态调整预览尺寸以适应不同分辨率
+                    # 计算合适的预览尺寸（保持宽高比，最大不超过480x270）
+                    img_h, img_w = frame2.shape[:2]
+                    scale = min(480/img_w, 270/img_h)
+                    preview_w = int(img_w * scale)
+                    preview_h = int(img_h * scale)
+                    frame2_pil = frame2_pil.resize((preview_w, preview_h), Image.LANCZOS)
+                    # print(f"Camera 2: {img_w}x{img_h} -> {preview_w}x{preview_h}")  # 调试信息
                     frame2_tk = ImageTk.PhotoImage(frame2_pil)
                     
                     # 更新预览标签
@@ -1463,6 +1470,13 @@ class ModernDualCameraRecorder:
         # 每5秒更新一次预览 - 减少资源消耗，主要用于帮助用户调整摄像头位置
         if self.preview_active:
             self.root.after(5000, self.update_preview)
+    
+    def update_preview_resolution(self, camera_index):
+        """当用户改变分辨率选择时更新预览分辨率"""
+        if self.preview_active:
+            print(f"Updating preview resolution for camera {camera_index + 1}...")
+            # 稍微延迟以避免频繁切换对摄像头造成干扰
+            self.root.after(500, lambda: self.init_preview_camera(camera_index))
         
     def run(self):
         """Start the application"""

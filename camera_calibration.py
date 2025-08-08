@@ -8,6 +8,7 @@ import os # For handling file paths
 import sys # For handling path separators
 import time # For timestamp in filenames
 from datetime import datetime,timezone, timedelta
+from camera_utils import CameraManager, open_camera_with_fallback
 # import threading # Tkinter's after is simpler for GUI updates
 
 # Helper function to convert OpenCV image (NumPy array) to Tkinter PhotoImage
@@ -88,65 +89,41 @@ def cv2_to_tk(cv2_img, display_width, display_height):
     return (tk_photo, None) # Success
 
 
-class MinimalistCalibratorGUI:
+class ModernCalibratorGUI:
     def __init__(self, master):
         self.master = master
-        master.title("Camera Calibration Tool") # Simple title
-        # master.minsize(900, 750) # Set minimum window size to accommodate capture preview - Adjusted later
+        master.title("Professional Camera Calibration Studio") # Modern title
+        master.geometry("1200x900")
+        master.minsize(1000, 800)
+        master.configure(bg='#f8f9fa')
+        
+        # Modern color scheme (same as dual_camera_recorder)
+        self.colors = {
+            'bg': '#f8f9fa',
+            'card': '#ffffff',
+            'primary': '#007bff',
+            'success': '#28a745',
+            'danger': '#dc3545',
+            'warning': '#ffc107',
+            'text': '#212529',
+            'text_muted': '#6c757d',
+            'border': '#dee2e6',
+            'shadow': '#00000010'
+        }
 
+        # Configure modern styles first
+        self.configure_styles()
+        
         # --- Try setting application icon ---
         icon_path = "calib.png"
         if os.path.exists(icon_path):
             try:
-                # Load the icon image using PIL
                 pil_icon = Image.open(icon_path)
-                # Convert the PIL image to Tkinter PhotoImage
                 tk_icon = ImageTk.PhotoImage(pil_icon)
-                # Set the window icon for the root window and all subsequent toplevel windows
                 master.iconphoto(True, tk_icon)
             except Exception as e:
-                print(f"Warning: Could not load or set application icon from {icon_path}: {e}")
-        else:
-            print(f"Warning: Application icon file '{icon_path}' not found in the current directory.")
-
-                # Configure ttk style for countdown label
-
-        # --- Configure ttk styles for a white minimalist theme ---
-        style = ttk.Style()
-        # 'clam' is a relatively simple theme
-        style.theme_use('clam')
-
-        # Configure default styles for widget classes, setting background to white
-        style.configure('TFrame', background='white')
-        style.configure('TLabel', background='white')
-        # Configure default style for TLabelframe (background and label text color)
-        # Note: This might not make the LabelFrame border white, as the border is part of the theme drawing
-        style.configure('TLabelframe', background='white')
-        style.configure('TLabelframe.Label', background='white', foreground='black') # Ensure label text is visible
-
-        # Configure Treeview style, setting the content area background to white
-        style.configure('Treeview', background='white', fieldbackground='white', foreground='black', rowheight=25) # rowheight can adjust row height
-        style.configure('Treeview.Heading', background='white', foreground='black', font=('TkDefaultFont', 10, 'bold'))
-
-        # Define Tag Styles, e.g., excluded rows turn grey
-        style.configure('excluded', foreground='gray')
-        style.configure('failed', foreground='red')
-
-        # Configure Notebook styles
-        style.configure('TNotebook', background='white', borderwidth=0)
-        style.configure('TNotebook.Tab', background='lightgray', foreground='black', padding=[5, 2]) # Padding [width, height]
-        style.map('TNotebook.Tab', background=[('selected', 'white')]) # Selected tab background is white
-        style.configure(
-            "CountdownLabel.TLabel",
-            background="white",
-            foreground="black",
-            font=("Helvetica", 60),
-            opacity=0.5,  # 设置透明度
-        )
-
-        # tk.Text widgets are not ttk, directly set bg parameter
-
-
+                print(f"Warning: Could not load or set application icon: {e}")
+        
         # Data storage
         self.image_paths = []
         self.objpoints_all = [] # All 3D points for images where corners were found (world coordinate system)
@@ -159,6 +136,10 @@ class MinimalistCalibratorGUI:
         self.tvecs = None # Translation vectors for successfully calibrated images (corresponding to objpoints_all/imgpoints_all order)
         self.per_view_errors = [] # Reprojection error for each successfully calibrated image (corresponding to objpoints_all/imgpoints_all order)
         self.image_size = None # Image size (width, height) used for calibration
+        
+        # Camera management using camera_utils
+        self.detected_cameras = []
+        self.available_cameras = []
         self.board_params = {} # Stores chessboard parameters
         self.undistort_image_path = None # Path for the single image to undistort
 
@@ -181,7 +162,6 @@ class MinimalistCalibratorGUI:
         self.preview_width = 640  # Fixed preview width
         self.preview_height = 480 # Fixed preview height
 
-
         # --- GUI Layout ---
         main_frame = ttk.Frame(master, padding="15", style='TFrame')
         main_frame.grid(row=0, column=0, sticky="nsew")
@@ -189,16 +169,25 @@ class MinimalistCalibratorGUI:
         master.grid_rowconfigure(0, weight=1)
         master.configure(bg='white')
 
+        # --- Header (ASCII only to avoid X11 font fallback) ---
+        header_frame = ttk.Frame(main_frame, style='TFrame')
+        header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        header_label = ttk.Label(header_frame, text="Camera Calibration Studio", style='Title.TLabel')
+        header_label.pack(anchor='w')
+        header_sep = ttk.Separator(main_frame, orient='horizontal')
+        header_sep.grid(row=1, column=0, sticky='ew', pady=(0, 8))
+
         # --- Use Notebook for main sections ---
         self.notebook = ttk.Notebook(main_frame)
-        self.notebook.grid(row=0, column=0, sticky="nsew")
+        self.notebook.grid(row=2, column=0, sticky="nsew")
         main_frame.grid_columnconfigure(0, weight=1)
-        main_frame.grid_rowconfigure(0, weight=1) # Notebook takes up most vertical space
+        main_frame.grid_rowconfigure(2, weight=1) # Notebook takes up most vertical space
 
 
-        # --- Tab 1: Camera Calibration ---
-        calibration_tab = ttk.Frame(self.notebook, padding="10", style='TFrame')
+        # --- Tab 1: Modern Camera Calibration ---
+        calibration_tab = tk.Frame(self.notebook, bg=self.colors['bg'], padx=15, pady=15)
         self.notebook.add(calibration_tab, text='Camera Calibration')
+        
         calibration_tab.grid_columnconfigure(0, weight=1) # Settings/List column
         calibration_tab.grid_columnconfigure(1, weight=2) # Image View column
         calibration_tab.grid_rowconfigure(0, weight=1) # Calibration setup/images row
@@ -229,7 +218,7 @@ class MinimalistCalibratorGUI:
         select_file_frame = ttk.Frame(control_content_frame, style='TFrame')
         select_file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         select_file_frame.grid_columnconfigure(1, weight=1)
-        self.select_folder_button = ttk.Button(select_file_frame, text="Select Calibration Image Folder...")
+        self.select_folder_button = ttk.Button(select_file_frame, text="Select Calibration Image Folder...", style='Primary.TButton')
         self.select_folder_button.grid(row=0, column=0, sticky="w", padx=(0, 15))
         self.select_folder_button.config(command=self.select_folder)
         self.folder_path_label = ttk.Label(select_file_frame, text="No folder selected", relief="sunken", anchor="w", style='TLabel')
@@ -315,15 +304,15 @@ class MinimalistCalibratorGUI:
         operation_frame = ttk.Frame(results_operations_frame, style='TFrame')
         operation_frame.grid(row=0, column=0, sticky="w") # Align left
 
-        self.calibrate_button = ttk.Button(operation_frame, text="Start Calibration")
+        self.calibrate_button = ttk.Button(operation_frame, text="Start Calibration", style='Primary.TButton')
         self.calibrate_button.grid(row=0, column=0, padx=(0, 15))
         self.calibrate_button.config(command=self.run_calibration)
 
-        self.save_button = ttk.Button(operation_frame, text="Save Results...", state=tk.DISABLED)
+        self.save_button = ttk.Button(operation_frame, text="Save Results...", state=tk.DISABLED, style='Primary.TButton')
         self.save_button.grid(row=0, column=1, padx=(0, 15))
         self.save_button.config(command=self.save_results)
 
-        self.validate_button = ttk.Button(operation_frame, text="Validate Calibration", state=tk.DISABLED)
+        self.validate_button = ttk.Button(operation_frame, text="Validate Calibration", state=tk.DISABLED, style='Primary.TButton')
         self.validate_button.grid(row=0, column=2, padx=(0, 20))
         self.validate_button.config(command=self.validate_calibration)
 
@@ -349,9 +338,10 @@ class MinimalistCalibratorGUI:
         self.dist_coeffs_text.grid(row=1, column=1, sticky="nsew", pady=(5, 0))
 
 
-        # --- Tab 2: Single Image Undistortion Tool ---
-        undistort_tab = ttk.Frame(self.notebook, padding="10", style='TFrame')
-        self.notebook.add(undistort_tab, text='Undistort Single Image')
+        # --- Tab 2: Modern Single Image Undistortion Tool ---
+        undistort_tab = tk.Frame(self.notebook, bg=self.colors['bg'], padx=15, pady=15)
+        self.notebook.add(undistort_tab, text='Undistort Image')
+        
         undistort_tab.grid_columnconfigure(0, weight=1) # Make the image path label column expandable
 
         undistort_frame = ttk.LabelFrame(undistort_tab, text="Undistort Single Image Tool", padding="10", style='TLabelframe')
@@ -360,7 +350,7 @@ class MinimalistCalibratorGUI:
 
         ttk.Label(undistort_frame, text="Input Image:", style='TLabel').grid(row=0, column=0, sticky="w", padx=(0, 5))
 
-        self.select_undistort_image_button = ttk.Button(undistort_frame, text="Select Image File...")
+        self.select_undistort_image_button = ttk.Button(undistort_frame, text="Select Image File...", style='Primary.TButton')
         self.select_undistort_image_button.grid(row=0, column=1, sticky="ew", padx=(0, 5))
         self.select_undistort_image_button.config(command=self.select_undistort_image)
 
@@ -370,14 +360,15 @@ class MinimalistCalibratorGUI:
         undistort_frame.grid_columnconfigure(1, weight=0)
         undistort_frame.grid_columnconfigure(2, weight=1)
 
-        self.run_undistort_button = ttk.Button(undistort_frame, text="Undistort and Save...", state=tk.DISABLED)
+        self.run_undistort_button = ttk.Button(undistort_frame, text="Undistort and Save...", state=tk.DISABLED, style='Primary.TButton')
         self.run_undistort_button.grid(row=1, column=0, columnspan=3, pady=(10, 0))
         self.run_undistort_button.config(command=self.run_undistort_and_save)
 
 
-        # --- Tab 3: Camera Capture Tool ---
-        capture_tab = ttk.Frame(self.notebook, padding="10", style='TFrame')
+        # --- Tab 3: Modern Camera Capture Tool ---
+        capture_tab = tk.Frame(self.notebook, bg=self.colors['bg'], padx=15, pady=15)
         self.notebook.add(capture_tab, text='Camera Capture')
+        
         capture_tab.grid_columnconfigure(0, weight=0) # Controls column - fixed width
         capture_tab.grid_columnconfigure(1, weight=1) # Preview column - expands to fill available space
         capture_tab.grid_rowconfigure(0, weight=1) # Capture frame row - expands to fill available space
@@ -394,37 +385,48 @@ class MinimalistCalibratorGUI:
         capture_controls_frame.grid(row=0, column=0, padx=(0, 10), rowspan=2, sticky="ns") # Placed in column 0, row 0, sticky ns to fill vertically
         capture_controls_frame.grid_columnconfigure(1, weight=1) # Allow widgets within controls to expand
 
-        ttk.Label(capture_controls_frame, text="Camera Index:", style='TLabel').grid(row=0, column=0, sticky="w", padx=(0, 5))
-        self.entry_camera_index = ttk.Entry(capture_controls_frame, width=5)
-        self.entry_camera_index.grid(row=0, column=1, sticky="ew", padx=(0, 0))
-        self.entry_camera_index.insert(0, "0")
+        # Camera detection and selection with modern styling
+        ttk.Label(capture_controls_frame, text="Auto-Detect:", style='DeviceInfo.TLabel').grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.detect_cameras_button = ttk.Button(capture_controls_frame, text="Detect Cameras",
+                                               style='Success.TButton')
+        self.detect_cameras_button.grid(row=0, column=1, sticky="ew", padx=(0, 0))
+        self.detect_cameras_button.config(command=self.detect_cameras)
+        
+        ttk.Label(capture_controls_frame, text="Select Camera:", style='DeviceInfo.TLabel').grid(row=1, column=0, sticky="w", padx=(0, 5), pady=(5,0))
+        self.camera_var = tk.StringVar()
+        self.camera_combo = ttk.Combobox(capture_controls_frame, textvariable=self.camera_var,
+                                        state='readonly', width=30,
+                                        style='Modern.TCombobox')
+        self.camera_combo.grid(row=1, column=1, sticky="ew", padx=(0, 0), pady=(5,0))
 
-        ttk.Label(capture_controls_frame, text="Interval (s):", style='TLabel').grid(row=1, column=0, sticky="w", padx=(0, 5), pady=(5,0))
+        ttk.Label(capture_controls_frame, text="Interval (s):", style='TLabel').grid(row=2, column=0, sticky="w", padx=(0, 5), pady=(5,0))
         self.entry_capture_interval = ttk.Entry(capture_controls_frame, width=5)
-        self.entry_capture_interval.grid(row=1, column=1, sticky="ew", padx=(0, 0), pady=(5,0))
+        self.entry_capture_interval.grid(row=2, column=1, sticky="ew", padx=(0, 0), pady=(5,0))
 
-        ttk.Label(capture_controls_frame, text="Total Photos:", style='TLabel').grid(row=2, column=0, sticky="w", padx=(0, 5), pady=(5,0))
+        ttk.Label(capture_controls_frame, text="Total Photos:", style='TLabel').grid(row=3, column=0, sticky="w", padx=(0, 5), pady=(5,0))
         self.entry_total_photos = ttk.Entry(capture_controls_frame, width=5)
-        self.entry_total_photos.grid(row=2, column=1, sticky="ew", padx=(0, 0), pady=(5,0))
+        self.entry_total_photos.grid(row=3, column=1, sticky="ew", padx=(0, 0), pady=(5,0))
 
-        ttk.Label(capture_controls_frame, text="Output Folder:", style='TLabel').grid(row=3, column=0, sticky="nw", padx=(0, 5), pady=(10,0))
+        ttk.Label(capture_controls_frame, text="Output Folder:", style='TLabel').grid(row=4, column=0, sticky="nw", padx=(0, 5), pady=(10,0))
         self.select_capture_folder_button = ttk.Button(capture_controls_frame, text="Select Folder...")
-        self.select_capture_folder_button.grid(row=3, column=1, sticky="ew", padx=(0, 0), pady=(10,0))
+        self.select_capture_folder_button.grid(row=4, column=1, sticky="ew", padx=(0, 0), pady=(10,0))
         self.select_capture_folder_button.config(command=self.select_capture_folder)
 
         self.capture_output_folder_label = ttk.Label(capture_controls_frame, text="No folder selected", relief="sunken", anchor="w", style='TLabel', wraplength=200)
-        self.capture_output_folder_label.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(5,0))
+        self.capture_output_folder_label.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(5,0))
 
-        self.start_capture_button = ttk.Button(capture_controls_frame, text="Start Capture")
-        self.start_capture_button.grid(row=5, column=0, sticky="ew", pady=(10, 5))
+        self.start_capture_button = ttk.Button(capture_controls_frame, text="Start Capture",
+                                             style='Success.TButton')
+        self.start_capture_button.grid(row=6, column=0, sticky="ew", pady=(10, 5))
         self.start_capture_button.config(command=self.start_capture)
 
-        self.stop_capture_button = ttk.Button(capture_controls_frame, text="Stop Capture", state=tk.DISABLED)
-        self.stop_capture_button.grid(row=5, column=1, sticky="ew", pady=(10, 5))
+        self.stop_capture_button = ttk.Button(capture_controls_frame, text="Stop Capture", 
+                                            state=tk.DISABLED, style='Danger.TButton')
+        self.stop_capture_button.grid(row=6, column=1, sticky="ew", pady=(10, 5))
         self.stop_capture_button.config(command=self.stop_capture)
 
-        self.capture_status_label = ttk.Label(capture_controls_frame, text="Idle", anchor="w", style='TLabel', wraplength=250)
-        self.capture_status_label.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(5,0))
+        self.capture_status_label = ttk.Label(capture_controls_frame, text="Click 'Detect Cameras' to start", anchor="w", style='TLabel', wraplength=250)
+        self.capture_status_label.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(5,0))
 
 
         # Camera Preview Area (right side)
@@ -451,8 +453,106 @@ class MinimalistCalibratorGUI:
         # Row 1 contains the status bar, which has fixed height
         main_frame.grid_rowconfigure(0, weight=1)
         main_frame.grid_rowconfigure(1, weight=0)
+        
+        # Auto-detect cameras on startup
+        self.master.after(500, self.detect_cameras)  # Delay to let GUI finish loading
+        
+        print("Modern Camera Calibration Studio initialized")
+        
+        # --- Try setting application icon ---
+        icon_path = "calib.png"
+        if os.path.exists(icon_path):
+            try:
+                pil_icon = Image.open(icon_path)
+                tk_icon = ImageTk.PhotoImage(pil_icon)
+                master.iconphoto(True, tk_icon)
+            except Exception as e:
+                print(f"Warning: Could not load or set application icon: {e}")
 
+    
+    def configure_styles(self):
+        """Configure modern ttk styles matching dual_camera_recorder"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        # Configure title style (no custom font)
+        style.configure('Title.TLabel',
+                       background=self.colors['bg'],
+                       foreground=self.colors['text'])
+        
+        # Configure subtitle style (no custom font)
+        style.configure('Subtitle.TLabel',
+                       background=self.colors['bg'],
+                       foreground=self.colors['text_muted'])
+        
+        # Configure section title style (no custom font)
+        style.configure('SectionTitle.TLabel',
+                       background=self.colors['card'],
+                       foreground=self.colors['text'])
+        
+        # Configure device info style (no custom font)
+        style.configure('DeviceInfo.TLabel',
+                       background=self.colors['card'],
+                       foreground=self.colors['text'])
+        
+        # Configure modern buttons (no custom font)
+        style.configure('Primary.TButton',
+                       foreground='white',
+                       background=self.colors['primary'],
+                       borderwidth=0,
+                       focuscolor='none',
+                       padding=(12, 6))
+        
+        style.configure('Success.TButton',
+                       foreground='white',
+                       background=self.colors['success'],
+                       borderwidth=0,
+                       focuscolor='none',
+                       padding=(15, 6))
+        
+        style.configure('Danger.TButton',
+                       foreground='white',
+                       background=self.colors['danger'],
+                       borderwidth=0,
+                       focuscolor='none',
+                       padding=(12, 6))
+        
+        # Configure modern combobox (no custom font)
+        style.configure('Modern.TCombobox',
+                       fieldbackground=self.colors['card'],
+                       borderwidth=1,
+                       relief='solid',
+                       bordercolor=self.colors['border'],
+                       arrowcolor=self.colors['text'])
+        
+        # Configure default styles for backward compatibility
+        style.configure('TFrame', background=self.colors['card'])
+        style.configure('TLabel', background=self.colors['card'])
+        # Configure default style for TLabelframe (background and label text color)
+        # Note: This might not make the LabelFrame border white, as the border is part of the theme drawing
+        style.configure('TLabelframe', background='white')
+        style.configure('TLabelframe.Label', background='white', foreground='black') # Ensure label text is visible
 
+        # Configure Treeview style, setting the content area background to white
+        style.configure('Treeview', background='white', fieldbackground='white', foreground='black', rowheight=25) # rowheight can adjust row height
+        style.configure('Treeview.Heading', background='white', foreground='black')
+
+        # Define Tag Styles, e.g., excluded rows turn grey
+        style.configure('excluded', foreground='gray')
+        style.configure('failed', foreground='red')
+
+        # Configure Notebook styles
+        style.configure('TNotebook', background='white', borderwidth=0)
+        style.configure('TNotebook.Tab', background='lightgray', foreground='black', padding=[5, 2]) # Padding [width, height]
+        style.map('TNotebook.Tab', background=[('selected', 'white')]) # Selected tab background is white
+        style.configure(
+            "CountdownLabel.TLabel",
+            background="white",
+            foreground="black",
+        )
+
+        # tk.Text widgets are not ttk, directly set bg parameter
+    
     # --- Core method implementation ---
     # def start_initial_countdown(self, countdown_seconds): # <--- 注释或删除旧名称
     def run_capture_countdown(self, countdown_seconds):
@@ -460,7 +560,157 @@ class MinimalistCalibratorGUI:
         if countdown_seconds > 0:
             self.camera_preview_label.config(
                 text=str(countdown_seconds),
-                font=("Helvetica", 90),  # Larger font
+                # font removed to avoid X11 error
+                compound="center"
+            )
+            self.camera_preview_label.configure(style="CountdownLabel.TLabel")  # Apply style
+            self.master.after(1000, self.run_capture_countdown, countdown_seconds - 1)
+        else:
+            # --- Countdown finished ---
+            # 显示 "Saving..." 并重置字体和样式
+            self.camera_preview_label.config(text="Saving...", font=None, compound="image") # <-- 添加 font=None
+            self.camera_preview_label.configure(style="TLabel") # <-- 重置样式
+            self.master.update_idletasks() # Update UI to show "Saving..."
+
+            # --- **Call the save function** ---
+            save_successful = self._capture_photo_save()
+
+            # --- Decide next step based on save result and count ---
+            # 检查 self.is_capturing 以防在保存期间被外部停止
+            if self.is_capturing:
+                if save_successful and self.capture_count < self.total_capture_count:
+                    # 保存成功，且需要继续拍照：安排下一次循环
+                    self.status_bar.config(text=f"Photo {self.capture_count} saved. Waiting for interval...")
+                    self.schedule_capture_save() # 调用 schedule_capture_save 来等待间隔并开始下一次倒计时
+                elif save_successful and self.capture_count >= self.total_capture_count:
+                    # 保存成功，且所有照片已拍完：完成并停止
+                    self.status_bar.config(text="Camera capture finished.")
+                    messagebox.showinfo("Capture Complete", f"Successfully captured {self.capture_count} photos.")
+                    self.stop_capture() # 最终停止
+                    self.capture_status_label.config(text=f"Capture Complete: {self.capture_count} photos saved.") # 显示最终状态
+                elif not save_successful:
+                    # 保存失败 (错误已显示，停止函数已在 _capture_photo_save 中调用)
+                    self.status_bar.config(text="Capture stopped due to save error.")
+                    # 确保停止状态正确反映，以防万一 stop_capture 没被调用
+                    if self.is_capturing:
+                         self.stop_capture()
+                    self.capture_status_label.config(text=f"Capture Error after {self.capture_count-1} photos saved.")
+            # else: Capture was stopped externally (e.g., user clicked Stop) - stop_capture handles cleanup 
+
+    def select_folder(self):
+        """Open folder selection dialog, load image list"""
+        folder_selected = filedialog.askdirectory()
+        if folder_selected:
+            self.folder_path_label.config(text=folder_selected)
+            # Debug message added here
+            self.status_bar.config(text=f"Searching for images in selected folder...") # Added debug message
+            self.master.update() # Force GUI update
+
+            # Support common image formats and sort by filename
+            image_extensions = ['*.jpg', '*.png', '*.jpeg', '*.bmp', '*.tiff']
+            self.image_paths = []
+            for ext in image_extensions:
+                # Use os.path.join to build cross-platform paths
+                self.image_paths.extend(glob.glob(os.path.join(folder_selected, ext)))
+
+            self.image_paths.sort()
+
+            if not self.image_paths:
+                # Debug message modified here
+                self.status_bar.config(text="No supported image files found (.jpg, .png, etc.)") # Modified debug message
+                self.reset_gui_state()
+                return
+
+            # Debug message modified here
+            self.status_bar.config(text=f"Found {len(self.image_paths)} images.") # Modified debug message
+            self.reset_gui_state() # Reset all states and display, but keep image_paths
+            self.update_image_list() # Update list display
+
+    def update_image_list(self):
+        """Update the Treeview image list, displaying name, error, and status"""
+        self.image_list_tree.delete(*self.image_list_tree.get_children()) # Clear the list
+        for i, path in enumerate(self.image_paths):
+            # Use os.path.basename to get filename, handling cross-platform paths
+            filename = os.path.basename(path)
+
+            error_text = ""
+            status = ""
+            tags = () # Used for setting row color or other styles
+
+            if i in self.excluded_indices:
+                 status = "Excluded" # Consistent English status
+                 tags = ('excluded',) # Apply excluded style tag
+
+            # Check if the image was successfully used for calibration (implies corners were found)
+            # Only show error if calibration was successful AND the image was used
+            if self.camera_matrix is not None and i in self.successful_image_indices:
+                 try:
+                     # Find the index of this image within the list of successfully calibrated images
+                     error_index = self.successful_image_indices.index(i)
+                     error_text = f"{self.per_view_errors[error_index]:.4f}"
+                     if not status: # If not already marked as excluded
+                         status = "Success" # Consistent English status
+                 except ValueError:
+                     # This should ideally not happen if data is consistent
+                     status = "Error Finding" # Consistent English status (Shouldn't happen if logic is correct)
+
+
+            # If not excluded, and the corner finding process has run (successful_image_indices is not empty),
+            # and this image was not in the successful list, mark as find failed.
+            # Check if objpoints_all is not empty as a sign that find corners process has at least started/ran
+            elif not i in self.excluded_indices and (self.successful_image_indices or (self.objpoints_all and i not in self.successful_image_indices)):
+                 if not status: # If not already marked as excluded or successful
+                     status = "Find Failed" # Consistent English status
+                     tags = ('failed',) # Apply find failed style tag
+            elif not i in self.excluded_indices and not self.objpoints_all:
+                 # If not excluded and corner finding hasn't even run yet
+                 status = "" # Or could set to "Pending" or similar if desired, but empty is minimalist
+
+
+            # Insert item into Treeview
+            # iid is used later to retrieve the item based on the original image index
+            self.image_list_tree.insert("", "end", iid=str(i), text=filename, values=(error_text, status), tags=tags)
+
+
+    def detect_cameras(self):
+        """Detect available cameras using camera_utils module"""
+        try:
+            self.capture_status_label.config(text="Detecting cameras...")
+            self.master.update_idletasks()
+            
+            # Use the unified camera detection
+            self.detected_cameras = CameraManager.detect_cameras()
+            
+            if self.detected_cameras:
+                # Update camera dropdown
+                camera_options = [camera.get_display_name() for camera in self.detected_cameras]
+                self.camera_combo['values'] = camera_options
+                
+                # Select first camera by default
+                if camera_options:
+                    self.camera_var.set(camera_options[0])
+                
+                self.capture_status_label.config(text=f"Found {len(self.detected_cameras)} cameras. Ready to capture.")
+                self.status_bar.config(text=f"Detected {len(self.detected_cameras)} cameras successfully")
+            else:
+                self.capture_status_label.config(text="No cameras detected. Check connections.")
+                self.status_bar.config(text="No cameras detected")
+                messagebox.showwarning("Warning", "No cameras detected. Please check camera connections.")
+                
+        except Exception as e:
+            error_msg = f"Camera detection failed: {e}"
+            self.capture_status_label.config(text=error_msg)
+            self.status_bar.config(text=error_msg)
+            messagebox.showerror("Error", error_msg)
+    
+    # --- Core method implementation ---
+    # def start_initial_countdown(self, countdown_seconds): # <--- 注释或删除旧名称
+    def run_capture_countdown(self, countdown_seconds):
+        """Display an initial countdown before starting capture."""
+        if countdown_seconds > 0:
+            self.camera_preview_label.config(
+                text=str(countdown_seconds),
+                # font removed to avoid X11 error
                 compound="center"
             )
             self.camera_preview_label.configure(style="CountdownLabel.TLabel")  # Apply style
@@ -1034,8 +1284,7 @@ class MinimalistCalibratorGUI:
         self.capture_output_folder = None
         self.capture_output_folder_label.config(text="No folder selected")
         self.capture_status_label.config(text="Idle")
-        self.entry_camera_index.delete(0, tk.END) # Clear and reset defaults
-        self.entry_camera_index.insert(0, "0")
+        # Reset capture settings - using correct control names
         self.entry_capture_interval.delete(0, tk.END)
         self.entry_capture_interval.insert(0, "1.0")
         self.entry_total_photos.delete(0, tk.END)
@@ -1532,15 +1781,30 @@ class MinimalistCalibratorGUI:
             messagebox.showwarning("Warning", "Camera capture or preview is already in progress.")
             return
 
+        # Get selected camera
+        if not self.detected_cameras or not self.camera_var.get():
+            messagebox.showwarning("Warning", "Please detect and select a camera first.")
+            self.status_bar.config(text="Capture start failed: No camera selected.")
+            return
+            
+        # Find selected camera device
+        selected_camera_name = self.camera_var.get()
+        selected_camera = None
+        for camera in self.detected_cameras:
+            if camera.get_display_name() == selected_camera_name:
+                selected_camera = camera
+                break
+        
+        if selected_camera is None:
+            messagebox.showerror("Error", "Selected camera not found.")
+            return
+
         # Validate inputs
         try:
-            camera_index = int(self.entry_camera_index.get())
             interval_sec = float(self.entry_capture_interval.get())
             total_photos = int(self.entry_total_photos.get())
             if interval_sec <= 0 or total_photos <= 0:
                 raise ValueError("Interval and total photos must be positive.")
-            if camera_index < 0:
-                raise ValueError("Camera index must be non-negative.")
         except ValueError as e:
             messagebox.showerror("Invalid Input", f"Please check camera settings inputs:\n{e}")
             self.status_bar.config(text="Capture start failed: Invalid settings.")
@@ -1551,13 +1815,13 @@ class MinimalistCalibratorGUI:
             self.status_bar.config(text="Capture start failed: No output folder selected.")
             return
 
-        # Initialize camera
-        self.status_bar.config(text=f"Opening camera {camera_index}...")
+        # Initialize camera using camera_utils
+        self.status_bar.config(text=f"Opening camera {selected_camera.get_display_name()}...")
         self.master.update_idletasks()
         try:
-            self.camera_cap = cv2.VideoCapture(camera_index)
-            if not self.camera_cap.isOpened():
-                raise IOError(f"Cannot open camera {camera_index}")
+            self.camera_cap = open_camera_with_fallback(selected_camera)
+            if self.camera_cap is None or not self.camera_cap.isOpened():
+                raise IOError(f"Cannot open camera {selected_camera.get_display_name()}")
 
             # Optionally set camera resolution (may not work on all cameras/platforms)
             # Attempt to set the camera resolution to match the desired preview size
@@ -1575,7 +1839,7 @@ class MinimalistCalibratorGUI:
 
 
         except Exception as e:
-            error_msg = f"Error accessing camera {camera_index}: {e}"
+            error_msg = f"Error accessing camera {selected_camera.get_display_name()}: {e}"
             self.status_bar.config(text="Capture start failed: " + error_msg)
             messagebox.showerror("Camera Error", error_msg)
             self.camera_cap = None # Ensure cap is None on failure
@@ -1828,5 +2092,5 @@ if __name__ == "__main__":
     root = tk.Tk()
     # Can set minimum window size
     # root.minsize(800, 600) # Set in __init__
-    gui = MinimalistCalibratorGUI(root)
-    gui.run()
+    app = ModernCalibratorGUI(root)
+    app.run()
