@@ -77,11 +77,32 @@ frames_export_20250123_143500_basketball_recording_20250123_143052/
 ## 🛠️ 其他工具快速参考
 
 ### 透视变换标定 (`homography.py`)
+![Homography calibration UI overview](homography.png)
+
 **用途**: 建立篮球场地坐标系，分析球员位置轨迹
+
 ```bash
 python3 homography.py
-# 1. 加载场地图像 → 2. 导入JSON标注 → 3. 输入坐标 → 4. 验证结果
 ```
+
+**工作流程**
+
+1. **自动检测设备**: 程序启动后会调用 `camera_utils.CameraManager` 枚举摄像头并填充下拉框，可在右侧卡片中选择分辨率，然后开启预览。
+2. **采集标定点**: 勾选“Calibration Mode”后在画布上点击采集像素坐标；弹窗中输入对应的世界坐标（单位mm），列表会实时记录点位。
+3. **编辑与管理**: 列表支持选中后 `Edit` 或 `Delete`，也可以一键 `Clear All` 重置，确保至少保留4个有效点用于矩阵求解。
+4. **计算单应矩阵**: 点击 `Calculate Homography Matrix` 触发RANSAC求解，结果会写入状态日志；若成功，可 `Save` 导出JSON，或 `Load` 载入历史标定。
+5. **验证与辅助工具**: 启用 `Verification Mode` 在画面上点击可回读世界坐标；`Show Y-axis 5-10m verification points` 会基于矩阵叠加验证点；`Polar Coordinate` 模块可配置极坐标原点，辅助角度分析。
+6. **帧保存**: `Save Current Frame` 会保存叠加标注的预览图，便于复盘步骤。
+
+**调试提示**
+
+- 预览画面底部日志窗口会记录所有操作，出现摄像头或矩阵错误时优先查看日志输出。
+- 若求解失败，确认输入点位的世界坐标单位一致，或在状态栏提示后重新录制更平整的标定图像。
+- 验证模式显示的极坐标结果可帮助排查原点配置问题；需要重置时在 `Polar Coordinate` 区域更新原点后重新验证。
+
+**输出数据**
+
+- 保存的JSON包含像素/世界坐标、单应矩阵、极坐标配置等字段，可直接供 `fix_origin_offset.py` 或录像工具加载。
 
 ### 相机校正 (`camera_calibration.py`) 
 **用途**: 消除镜头畸变，提高测量精度
